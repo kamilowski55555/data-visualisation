@@ -1,0 +1,23 @@
+Zrodlo danych / Data source
+============================
+
+Zbior danych : Online Retail Dataset
+Autor        : Daqing Chen, Sai Liang Sain, Kun Guo
+Instytucja   : School of Engineering, London South Bank University
+Zrodlo       : UCI Machine Learning Repository
+URL          : https://archive.ics.uci.edu/dataset/352/online+retail
+Licencja     : Creative Commons Attribution 4.0 (CC BY 4.0)
+Cytowanie    : Chen, D. et al. (2012). Data mining for the online retail industry.
+               Journal of Database Marketing & Customer Strategy Management.
+
+Zakres danych:
+- Transakcje brytyjskiego sklepu e-commerce (sprzedaz hurtowa upominkow)
+- Okres: 01.12.2010 – 09.12.2011
+- Liczba rekordow (surowych): ~541 900
+- Kolumny: InvoiceNo, StockCode, Description, Quantity, InvoiceDate,
+           UnitPrice, CustomerID, Country
+
+Czyszczenie zastosowane w skrypcie:
+- Usunieto transakcje anulowane (InvoiceNo zaczynajace sie od 'C')
+- Usunieto wiersze z Quantity <= 0 lub UnitPrice <= 0
+- Usunieto wiersze bez CustomerID
