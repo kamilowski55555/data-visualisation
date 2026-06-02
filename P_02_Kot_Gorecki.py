@@ -89,6 +89,31 @@ n_orders    = df['InvoiceNo'].nunique()
 n_customers = int(df['CustomerID'].nunique())
 n_countries = df['Country'].nunique()
 
+# Nowa agregacja: Różnica w popularności produktów (UK vs Reszta Świata)
+# Obliczamy łączną ilość sztuk dla każdego produktu w podziale na UK i rynki zagraniczne
+prod_geo = df.groupby(['Description', 'Is_UK'])['Quantity'].sum().unstack(fill_value=0)
+
+# Przeskalowanie (Normalizacja): Obliczamy procentowy udział każdego produktu w całkowitym wolumenie danego rynku
+total_qty_uk = df[df['Is_UK'] == 'United Kingdom']['Quantity'].sum()
+total_qty_rest = df[df['Is_UK'] == 'Reszta Świata']['Quantity'].sum()
+
+prod_geo['UK_share'] = (prod_geo['United Kingdom'] / total_qty_uk) * 100
+prod_geo['Rest_share'] = (prod_geo['Reszta Świata'] / total_qty_rest) * 100
+
+# Obliczamy różnicę w punktach procentowych (p.p.)
+# Wartości dodatnie = produkt relatywnie popularniejszy w UK
+# Wartości ujemne = produkt relatywnie popularniejszy poza UK
+prod_geo['Diff'] = prod_geo['UK_share'] - prod_geo['Rest_share']
+prod_geo = prod_geo.reset_index()
+prod_geo['Produkt'] = prod_geo['Description'].str.title().str[:40]
+
+# Wybieramy top 10 produktów najbardziej odchylonych w stronę UK oraz top 10 w stronę Świata
+uk_leaning = prod_geo.sort_values('Diff', ascending=False).head(10)
+rest_leaning = prod_geo.sort_values('Diff', ascending=True).head(10)
+
+# Łączymy wyniki i sortujemy, aby wykres rósł płynnie od dołu do góry
+prod_diff_df = pd.concat([rest_leaning, uk_leaning]).sort_values('Diff')
+
 
 # ── 3. GENEROWANIE INTERAKTYWNYCH WYKRESÓW PLOTLY ─────────────────────────────
 
@@ -300,9 +325,27 @@ fp_customer_segments.update_layout(
     height=400
 )
 
+# Nowy wykres: Różnica popularności produktów (Skala względna UK vs Reszta Świata)
+fp_product_diff = go.Figure(go.Bar(
+    x=prod_diff_df['Diff'],
+    y=prod_diff_df['Produkt'],
+    orientation='h',
+    # Kolorowanie warunkowe: Morska zieleń dla Reszty Świata, Ciemny niebieski dla UK
+    marker_color=['#00897b' if d < 0 else '#1a237e' for d in prod_diff_df['Diff']],
+    hovertemplate='<b>%{y}</b><br>Różnica udziału: %{x:.3f} p.p.<extra></extra>'
+))
+
+fp_product_diff.update_layout(
+    title="Profilowanie asortymentu: Produkty specyficzne dla rynków zagranicznych (<span style='color:#00897b'>Reszta Świata</span>) vs <span style='color:#1a237e'>Wielka Brytania</span>",
+    xaxis_title='Różnica udziału w wolumenie rynku (Punkty Procentowe: Udział UK % - Udział Świata %)',
+    yaxis_title='Produkt',
+    template=TEMPLATE,
+    height=600
+)
+
 
 # ── POPRAWKA DLA WSZYSTKICH WYKRESÓW: BEZWZGLĘDNA ORIENTACJA POZIOMA ETYKIET ──
-all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty, fp_customer_segments]
+all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty, fp_customer_segments, fp_product_diff]
 for chart in all_charts:
     # Wymuszamy kąt 0 stopni (idealnie poziomo) oraz włączamy autodobieranie marginesów
     chart.update_xaxes(tickangle=0, automargin=True, overwrite=True)
@@ -339,7 +382,8 @@ with rc.ReportCreator(
         
         rc.Widget(StaticPlotlyWidget(fp1_bubble), label="Globalna struktura przychodów: Zgrupowany wykres bąbelkowy (UK vs Pozostałe Kraje)"),
         rc.Widget(StaticPlotlyWidget(fp_inter_countries5), label="Top 5 rynków zagranicznych według generowanego przychodu"),
-        
+        rc.Widget(StaticPlotlyWidget(fp_product_diff), label="Analiza preferencji produktowych: Produkty charakterystyczne rynkowo (Różnica w p.p. udziału wolumenu)"),
+
         rc.Separator(),
 
         rc.Heading("Sezonowość i dynamika przychodów", level=2),
