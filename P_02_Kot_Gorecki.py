@@ -44,6 +44,17 @@ df['Hour']       = df['InvoiceDate'].dt.hour
 print(f'Wierszy po czyszczeniu: {len(df):,}')
 
 # ── 2. Agregaty i struktury danych ───────────────────────────────────────────
+# ── NOWOŚĆ: Agregacja danych do analizy Pareto (Zasada 80/20) ──────────────────
+pareto_data = df.groupby('Description')['Revenue'].sum().sort_values(ascending=False).reset_index()
+total_revenue_pareto = pareto_data['Revenue'].sum()
+total_products_count = len(pareto_data)
+
+pareto_data['Cum_Revenue'] = pareto_data['Revenue'].cumsum()
+pareto_data['Cum_Rev_Pct'] = (pareto_data['Cum_Revenue'] / total_revenue_pareto) * 100
+pareto_data['Cum_Prod_Pct'] = ((pareto_data.index + 1) / total_products_count) * 100
+
+# Sprawdzamy dokładny skumulowany przychód wygenerowany przez najbliższe 20% produktów
+rev_at_20_pct_prod = pareto_data.iloc[(pareto_data['Cum_Prod_Pct'] - 20).abs().idxmin()]['Cum_Rev_Pct']
 by_country = (df.groupby('Country')['Revenue']
               .sum().sort_values(ascending=False)
               .reset_index()
@@ -124,6 +135,35 @@ prod_diff_df = pd.concat([rest_leaning, uk_leaning]).sort_values('Diff')
 
 
 # ── 3. GENEROWANIE INTERAKTYWNYCH WYKRESÓW PLOTLY ─────────────────────────────
+# ── NOWOŚĆ: Generowanie interaktywnego wykresu krzywej Pareto (Zasada 80/20) ──
+fp_pareto = go.Figure()
+
+fp_pareto.add_trace(go.Scatter(
+    x=pareto_data['Cum_Prod_Pct'],
+    y=pareto_data['Cum_Rev_Pct'],
+    mode='lines',
+    line=dict(color='#d32f2f', width=3),
+    name='Skumulowany przychód',
+    hovertemplate='Top %{x:.1f}% produktów<br>Generuje: %{y:.1f}% przychodu<extra></extra>'
+))
+
+# Linie pomocnicze (progi 20% i 80%) wraz z punktem przecięcia
+fp_pareto.add_vline(x=20, line_dash="dash", line_color="#777777", annotation_text="Progowe 20% produktów", annotation_position="top left")
+fp_pareto.add_hline(y=80, line_dash="dash", line_color="#777777", annotation_text="Progowe 80% przychodu", annotation_position="bottom right")
+fp_pareto.add_trace(go.Scatter(
+    x=[20], y=[80], mode='markers',
+    marker=dict(color='black', size=10, symbol='x'),
+    name='Punkt idealnego Pareto (20/80)', hovertemplate='Punkt odniesienia 20/80<extra></extra>'
+))
+
+fp_pareto.update_layout(
+    title="Weryfikacja zasady Pareto: Skumulowany udział produktów w całkowitym przychodzie",
+    xaxis_title='Skumulowany procent liczby produktów (od najważniejszego)',
+    yaxis_title='Skumulowany procent łącznego przychodu (%)',
+    template=TEMPLATE, height=450, showlegend=False,
+    xaxis=dict(ticksuffix='%', range=[0, 105]),
+    yaxis=dict(ticksuffix='%', range=[0, 105])
+)
 
 # Poprawka 1 & Poprawka 9: Wykres bąbelkowy z upakowanym kształtem (cluster) i dużymi kołami
 # UK jako wielkie koło, a spośród rynków zagranicznych pokazujemy TOP 5 osobno;
@@ -305,8 +345,8 @@ fp2_monthly.update_yaxes(tickprefix='£', tickformat=',.0f', tick0=200000, dtick
 
 
 # Poprawka 6: Heatmapa ze skalą biało-niebieską
-DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sunday']
-DAY_PL    = {'Monday': 'Poniedziałek', 'Tuesday': 'Wtorek', 'Wednesday': 'Środa', 'Thursday': 'Czwartek', 'Friday': 'Piątek', 'Sunday': 'Niedziela'}
+DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+DAY_PL    = {'Monday': 'Poniedziałek', 'Tuesday': 'Wtorek', 'Wednesday': 'Środa', 'Thursday': 'Czwartek', 'Friday': 'Piątek', 'Saturday' : 'Sobota', 'Sunday': 'Niedziela'}
 hmap = df.groupby(['DayOfWeek', 'Hour'])['Revenue'].sum().unstack(fill_value=0)
 hmap = hmap.reindex([d for d in DAY_ORDER if d in hmap.index])
 hmap.index = [DAY_PL.get(d, d) for d in hmap.index]
@@ -444,7 +484,8 @@ fp_top_products.update_layout(
 
 
 # ── POPRAWKA DLA WSZYSTKICH WYKRESÓW: BEZWZGLĘDNA ORIENTACJA POZIOMA ETYKIET ──
-all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty, fp_customer_segments, fp_product_diff, fp_top_products]
+# Do tej listy dopisujemy obiekt fp_pareto na sam koniec
+all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty, fp_customer_segments, fp_product_diff, fp_top_products, fp_pareto]
 for chart in all_charts:
     # Wymuszamy kąt 0 stopni (idealnie poziomo) oraz włączamy autodobieranie marginesów
     chart.update_xaxes(tickangle=0, automargin=True, overwrite=True)
@@ -488,6 +529,12 @@ with rc.ReportCreator(
         rc.Heading("Analiza asortymentu (bestsellery)", level=2),
         rc.Markdown("Zestawienie najlepiej sprzedających się produktów: liczba sprzedanych sztuk w porównaniu z generowanym przychodem."),
         rc.Widget(StaticPlotlyWidget(fp_top_products), label="Top 12 produktów: wolumen sprzedaży (sztuki) vs generowany przychód"),
+
+        # ── NOWOŚĆ: Dedykowana sekcja raportu dla zasady Pareto ────────────────
+        rc.Separator(),
+        rc.Heading("Weryfikacja hipotezy biznesowej: Zasada Pareto (80/20)", level=2),
+        rc.Markdown(f"Analiza koncentracji struktury asortymentowej pozwala ocenić stopień dywersyfikacji przychodów. W badanym portfolio produktowym e-sklepu **top 20% asortymentu odpowiada za {rev_at_20_pct_prod:.1f}% łącznego przychodu**. Wynik ten potwierdza silną obecność rynkowej reguły Pareto – relatywnie wąski trzon oferty generuje lwią część całości obrotu przedsiębiorstwa."),
+        rc.Widget(StaticPlotlyWidget(fp_pareto), label="Krzywa Lorenza / Wykres koncentracji przychodu Pareto"),
 
         rc.Separator(),
 
