@@ -81,9 +81,10 @@ top_products['Produkt'] = top_products['Description'].str.title().str[:35]
 # Nowa agregacja: Podział klientów na przedziały wydatków
 customer_all_spending = df.groupby('CustomerID')['Revenue'].sum().reset_index()
 
-# Definiujemy granice przedziałów oraz ich czytelne etykiety
-bins = [0, 1000, 5000, 10000, 25000, 50000, 100000, float('inf')]
-labels = ['<1k', '1-5k', '5-10k', '10-25k', '25-50k', '50-100k', '100k+']
+# Definiujemy granice przedziałów oraz ich czytelne etykiety.
+# Dominujący kubeł <1k rozbity na mniejsze, aby rozkład nie był tak skośny.
+bins = [0, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, float('inf')]
+labels = ['<100', '100-250', '250-500', '500-1k', '1-2.5k', '2.5-5k', '5-10k', '10-25k', '25k+']
 
 # Dyskretyzacja danych (przypisanie do kubłów) i zliczenie klientów
 customer_all_spending['Przedzial'] = pd.cut(customer_all_spending['Revenue'], bins=bins, labels=labels, right=False)
