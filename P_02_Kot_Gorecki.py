@@ -71,6 +71,13 @@ top_customers['CustomerID'] = top_customers['CustomerID'].astype(int).astype(str
 # Wolumen sprzedanych sztuk wg godzin
 hourly_qty = df.groupby('Hour')['Quantity'].sum().reset_index()
 
+# Nowa agregacja: Najlepiej sprzedające się produkty (sztuki vs przychód)
+prod_summary = (df.groupby('Description')
+                .agg(Sztuki=('Quantity', 'sum'), Przychod=('Revenue', 'sum'))
+                .reset_index())
+top_products = prod_summary.sort_values('Przychod', ascending=False).head(12).copy()
+top_products['Produkt'] = top_products['Description'].str.title().str[:35]
+
 # Nowa agregacja: Podział klientów na przedziały wydatków
 customer_all_spending = df.groupby('CustomerID')['Revenue'].sum().reset_index()
 
@@ -396,8 +403,34 @@ fp_product_diff.update_layout(
 )
 
 
+# Nowy wykres: Top produkty – liczba sprzedanych sztuk (słupki) vs przychód (linia, druga oś X)
+# Orientacja pozioma, bo nazwy produktów są długie. Odwracamy kolejność, by lider był na górze.
+prod_plot = top_products.iloc[::-1]
+fp_top_products = go.Figure()
+fp_top_products.add_trace(go.Bar(
+    y=prod_plot['Produkt'], x=prod_plot['Sztuki'],
+    name='Liczba sztuk', orientation='h', marker_color='#26a69a',
+    hovertemplate='<b>%{y}</b><br>Sprzedane sztuki: %{x:,}<extra></extra>'
+))
+fp_top_products.add_trace(go.Scatter(
+    y=prod_plot['Produkt'], x=prod_plot['Przychod'],
+    name='Przychód', xaxis='x2', mode='markers+lines',
+    line=dict(color='#1a237e', width=2), marker=dict(size=9),
+    hovertemplate='<b>%{y}</b><br>Przychód: £%{x:,.0f}<extra></extra>'
+))
+fp_top_products.update_layout(
+    title='Top 12 produktów: wolumen sprzedaży (słupki) vs generowany przychód (linia)',
+    xaxis=dict(title='Liczba sprzedanych sztuk'),
+    xaxis2=dict(title='Przychód (GBP)', tickprefix='£', tickformat=',.0f',
+                overlaying='x', side='top', showgrid=False),
+    yaxis=dict(title='Produkt'),
+    legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='right', x=1),
+    template=TEMPLATE, height=550
+)
+
+
 # ── POPRAWKA DLA WSZYSTKICH WYKRESÓW: BEZWZGLĘDNA ORIENTACJA POZIOMA ETYKIET ──
-all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty, fp_customer_segments, fp_product_diff]
+all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty, fp_customer_segments, fp_product_diff, fp_top_products]
 for chart in all_charts:
     # Wymuszamy kąt 0 stopni (idealnie poziomo) oraz włączamy autodobieranie marginesów
     chart.update_xaxes(tickangle=0, automargin=True, overwrite=True)
@@ -435,6 +468,12 @@ with rc.ReportCreator(
         rc.Widget(StaticPlotlyWidget(fp1_bubble), label="Globalna struktura przychodów: Zgrupowany wykres bąbelkowy (UK vs Pozostałe Kraje)"),
         rc.Widget(StaticPlotlyWidget(fp_inter_countries5), label="Top 5 rynków zagranicznych według generowanego przychodu"),
         rc.Widget(StaticPlotlyWidget(fp_product_diff), label="Analiza preferencji produktowych: Produkty charakterystyczne rynkowo (Różnica w p.p. udziału wolumenu)"),
+
+        rc.Separator(),
+
+        rc.Heading("Analiza asortymentu (bestsellery)", level=2),
+        rc.Markdown("Zestawienie najlepiej sprzedających się produktów: liczba sprzedanych sztuk w porównaniu z generowanym przychodem."),
+        rc.Widget(StaticPlotlyWidget(fp_top_products), label="Top 12 produktów: wolumen sprzedaży (sztuki) vs generowany przychód"),
 
         rc.Separator(),
 
