@@ -5,239 +5,261 @@ import pandas as pd
 import plotly.graph_objects as go
 import report_creator as rc
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
-TEMPLATE = 'plotly_white'
+TEMPLATE = "plotly_white"
+
 
 class StaticPlotlyWidget:
     def __init__(self, fig):
         self.fig = fig
-        
+
     def _repr_html_(self):
-        # Generujemy czysty HTML wykresu, wyłączając automatyczną 
-        # responsywność responsywność JS, która wymusza rotację etykiet
         return self.fig.to_html(
-            full_html=True, 
-            include_plotlyjs=True, 
-            config={'responsive': False}
+            full_html=True, include_plotlyjs=True, config={"responsive": False}
         )
 
-# Helper do ładnego i krótkiego formatowania wartości wewnątrz kół
+
 def format_val(val):
-    if val >= 1_000_000: return f"£{val/1_000_000:.1f}M"
-    if val >= 1_000: return f"£{val/1_000:.0f}k"
+    if val >= 1_000_000:
+        return f"£{val / 1_000_000:.1f}M"
+    if val >= 1_000:
+        return f"£{val / 1_000:.0f}k"
     return f"£{val:.0f}"
 
-# ── 1. Wczytywanie i przygotowanie danych ─────────────────────────────────────
-print('Wczytywanie danych...')
-df = pd.read_excel('Online Retail.xlsx', engine='openpyxl')
-df = df[~df['InvoiceNo'].astype(str).str.startswith('C')]
-df = df[(df['Quantity'] > 0) & (df['UnitPrice'] > 0)]
-df = df.dropna(subset=['CustomerID'])
 
-df['Revenue']    = df['Quantity'] * df['UnitPrice']
-df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
-df['YearMonth']  = df['InvoiceDate'].dt.to_period('M')
-df['DayOfWeek']  = df['InvoiceDate'].dt.day_name()
-df['Hour']       = df['InvoiceDate'].dt.hour
+print("Wczytywanie danych...")
+df = pd.read_excel("Online Retail.xlsx", engine="openpyxl")
+df = df[~df["InvoiceNo"].astype(str).str.startswith("C")]
+df = df[(df["Quantity"] > 0) & (df["UnitPrice"] > 0)]
+df = df.dropna(subset=["CustomerID"])
 
-print(f'Wierszy po czyszczeniu: {len(df):,}')
+df["Revenue"] = df["Quantity"] * df["UnitPrice"]
+df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
+df["YearMonth"] = df["InvoiceDate"].dt.to_period("M")
+df["DayOfWeek"] = df["InvoiceDate"].dt.day_name()
+df["Hour"] = df["InvoiceDate"].dt.hour
 
-# ── 2. Agregaty i struktury danych ───────────────────────────────────────────
-# ── NOWOŚĆ: Agregacja danych do analizy Pareto (Zasada 80/20) ──────────────────
-pareto_data = df.groupby('Description')['Revenue'].sum().sort_values(ascending=False).reset_index()
-total_revenue_pareto = pareto_data['Revenue'].sum()
+print(f"Wierszy po czyszczeniu: {len(df):,}")
+
+pareto_data = (
+    df.groupby("Description")["Revenue"]
+    .sum()
+    .sort_values(ascending=False)
+    .reset_index()
+)
+total_revenue_pareto = pareto_data["Revenue"].sum()
 total_products_count = len(pareto_data)
 
-pareto_data['Cum_Revenue'] = pareto_data['Revenue'].cumsum()
-pareto_data['Cum_Rev_Pct'] = (pareto_data['Cum_Revenue'] / total_revenue_pareto) * 100
-pareto_data['Cum_Prod_Pct'] = ((pareto_data.index + 1) / total_products_count) * 100
+pareto_data["Cum_Revenue"] = pareto_data["Revenue"].cumsum()
+pareto_data["Cum_Rev_Pct"] = (pareto_data["Cum_Revenue"] / total_revenue_pareto) * 100
+pareto_data["Cum_Prod_Pct"] = ((pareto_data.index + 1) / total_products_count) * 100
 
-# Sprawdzamy dokładny skumulowany przychód wygenerowany przez najbliższe 20% produktów
-rev_at_20_pct_prod = pareto_data.iloc[(pareto_data['Cum_Prod_Pct'] - 20).abs().idxmin()]['Cum_Rev_Pct']
-by_country = (df.groupby('Country')['Revenue']
-              .sum().sort_values(ascending=False)
-              .reset_index()
-              .rename(columns={'Country': 'Kraj', 'Revenue': 'Przychod'}))
-
-# Top 5 rynków ZAGRANICZNYCH (bez UK) -> wskakuje m.in. Australia
-top5_countries = by_country[by_country['Kraj'] != 'United Kingdom'].head(5).copy()
-top5_countries['Przychod_k'] = top5_countries['Przychod'] / 1_000
-
-# Dane miesięczne ogółem
-monthly = (df.groupby('YearMonth')['Revenue']
-           .sum().reset_index()
-           .rename(columns={'Revenue': 'Przychod'}))
-monthly['YearMonth_str'] = monthly['YearMonth'].dt.strftime('%m.%Y')
-
-# Dane do wykresu UK vs Reszta Świata
-df['Is_UK'] = df['Country'].apply(lambda x: 'United Kingdom' if x == 'United Kingdom' else 'Reszta Świata')
-monthly_uk_rest = df.groupby(['YearMonth', 'Is_UK'])['Revenue'].sum().unstack(fill_value=0).reset_index()
-monthly_uk_rest['YearMonth_str'] = monthly_uk_rest['YearMonth'].dt.strftime('%m.%Y')
-
-# Top 10 Klientów (Lojalność)
-top_customers = df.groupby('CustomerID')['Revenue'].sum().sort_values(ascending=False).head(10).reset_index()
-top_customers['CustomerID'] = top_customers['CustomerID'].astype(int).astype(str)
-
-# Wolumen sprzedanych sztuk wg godzin
-hourly_qty = df.groupby('Hour')['Quantity'].sum().reset_index()
-
-# Nowa agregacja: Najlepiej sprzedające się produkty (sztuki vs przychód)
-prod_summary = (df.groupby('Description')
-                .agg(Sztuki=('Quantity', 'sum'), Przychod=('Revenue', 'sum'))
-                .reset_index())
-top_products = prod_summary.sort_values('Przychod', ascending=False).head(12).copy()
-top_products['Produkt'] = top_products['Description'].str.title().str[:35]
-
-# Nowa agregacja: Podział klientów na przedziały wydatków
-customer_all_spending = df.groupby('CustomerID')['Revenue'].sum().reset_index()
-
-# Definiujemy granice przedziałów oraz ich czytelne etykiety.
-# Dominujący kubeł <1k rozbity na mniejsze, aby rozkład nie był tak skośny.
-bins = [0, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, float('inf')]
-labels = ['<100', '100-250', '250-500', '500-1k', '1-2.5k', '2.5-5k', '5-10k', '10-25k', '25k+']
-
-# Dyskretyzacja danych (przypisanie do kubłów) i zliczenie klientów
-customer_all_spending['Przedzial'] = pd.cut(customer_all_spending['Revenue'], bins=bins, labels=labels, right=False)
-spending_intervals = customer_all_spending['Przedzial'].value_counts().reindex(labels).reset_index()
-spending_intervals.columns = ['Przedzial', 'Liczba_Klientow']
-
-# Statystyki ogólne do KPI
-total_rev   = df['Revenue'].sum()
-n_orders    = df['InvoiceNo'].nunique()
-n_customers = int(df['CustomerID'].nunique())
-n_countries = df['Country'].nunique()
-
-# Nowa agregacja: Różnica w popularności produktów (UK vs Reszta Świata)
-# Obliczamy łączną ilość sztuk dla każdego produktu w podziale na UK i rynki zagraniczne
-prod_geo = df.groupby(['Description', 'Is_UK'])['Quantity'].sum().unstack(fill_value=0)
-
-# Przeskalowanie (Normalizacja): Obliczamy procentowy udział każdego produktu w całkowitym wolumenie danego rynku
-total_qty_uk = df[df['Is_UK'] == 'United Kingdom']['Quantity'].sum()
-total_qty_rest = df[df['Is_UK'] == 'Reszta Świata']['Quantity'].sum()
-
-prod_geo['UK_share'] = (prod_geo['United Kingdom'] / total_qty_uk) * 100
-prod_geo['Rest_share'] = (prod_geo['Reszta Świata'] / total_qty_rest) * 100
-
-# Obliczamy różnicę w punktach procentowych (p.p.)
-# Wartości dodatnie = produkt relatywnie popularniejszy w UK
-# Wartości ujemne = produkt relatywnie popularniejszy poza UK
-prod_geo['Diff'] = prod_geo['UK_share'] - prod_geo['Rest_share']
-prod_geo = prod_geo.reset_index()
-prod_geo['Produkt'] = prod_geo['Description'].str.title().str[:40]
-
-# Wybieramy top 10 produktów najbardziej odchylonych w stronę UK oraz top 10 w stronę Świata
-uk_leaning = prod_geo.sort_values('Diff', ascending=False).head(10)
-rest_leaning = prod_geo.sort_values('Diff', ascending=True).head(10)
-
-# Łączymy wyniki i sortujemy, aby wykres rósł płynnie od dołu do góry
-prod_diff_df = pd.concat([rest_leaning, uk_leaning]).sort_values('Diff')
-
-
-# ── 3. GENEROWANIE INTERAKTYWNYCH WYKRESÓW PLOTLY ─────────────────────────────
-# ── NOWOŚĆ: Generowanie interaktywnego wykresu krzywej Pareto (Zasada 80/20) ──
-fp_pareto = go.Figure()
-
-fp_pareto.add_trace(go.Scatter(
-    x=pareto_data['Cum_Prod_Pct'],
-    y=pareto_data['Cum_Rev_Pct'],
-    mode='lines',
-    line=dict(color='#d32f2f', width=3),
-    name='Skumulowany przychód',
-    hovertemplate='Top %{x:.1f}% produktów<br>Generuje: %{y:.1f}% przychodu<extra></extra>'
-))
-
-# Linie pomocnicze (progi 20% i 80%) wraz z punktem przecięcia
-fp_pareto.add_vline(x=20, line_dash="dash", line_color="#777777", annotation_text="Progowe 20% produktów", annotation_position="top left")
-fp_pareto.add_hline(y=80, line_dash="dash", line_color="#777777", annotation_text="Progowe 80% przychodu", annotation_position="bottom right")
-fp_pareto.add_trace(go.Scatter(
-    x=[20], y=[80], mode='markers',
-    marker=dict(color='black', size=10, symbol='x'),
-    name='Punkt idealnego Pareto (20/80)', hovertemplate='Punkt odniesienia 20/80<extra></extra>'
-))
-
-fp_pareto.update_layout(
-    title="Weryfikacja zasady Pareto: Skumulowany udział produktów w całkowitym przychodzie",
-    xaxis_title='Skumulowany procent liczby produktów (od najważniejszego)',
-    yaxis_title='Skumulowany procent łącznego przychodu (%)',
-    template=TEMPLATE, height=450, showlegend=False,
-    xaxis=dict(ticksuffix='%', range=[0, 105]),
-    yaxis=dict(ticksuffix='%', range=[0, 105])
+rev_at_20_pct_prod = pareto_data.iloc[
+    (pareto_data["Cum_Prod_Pct"] - 20).abs().idxmin()
+]["Cum_Rev_Pct"]
+by_country = (
+    df.groupby("Country")["Revenue"]
+    .sum()
+    .sort_values(ascending=False)
+    .reset_index()
+    .rename(columns={"Country": "Kraj", "Revenue": "Przychod"})
 )
 
-# Poprawka 1 & Poprawka 9: Wykres bąbelkowy z upakowanym kształtem (cluster) i dużymi kołami
-# UK jako wielkie koło, a spośród rynków zagranicznych pokazujemy TOP 5 osobno;
-# wszystkie pozostałe kraje agregujemy w jeden bąbelek "Pozostałe (N krajów)".
-uk_row      = by_country[by_country['Kraj'] == 'United Kingdom'].iloc[0]
-uk_revenue  = uk_row['Przychod']
-non_uk      = by_country[by_country['Kraj'] != 'United Kingdom'].reset_index(drop=True)
-others_revenue = non_uk['Przychod'].sum()
 
+top5_countries = by_country[by_country["Kraj"] != "United Kingdom"].head(5).copy()
+top5_countries["Przychod_k"] = top5_countries["Przychod"] / 1_000
+
+
+monthly = (
+    df.groupby("YearMonth")["Revenue"]
+    .sum()
+    .reset_index()
+    .rename(columns={"Revenue": "Przychod"})
+)
+monthly["YearMonth_str"] = monthly["YearMonth"].dt.strftime("%m.%Y")
+
+
+df["Is_UK"] = df["Country"].apply(
+    lambda x: "United Kingdom" if x == "United Kingdom" else "Reszta Świata"
+)
+monthly_uk_rest = (
+    df.groupby(["YearMonth", "Is_UK"])["Revenue"]
+    .sum()
+    .unstack(fill_value=0)
+    .reset_index()
+)
+monthly_uk_rest["YearMonth_str"] = monthly_uk_rest["YearMonth"].dt.strftime("%m.%Y")
+
+top_customers = (
+    df.groupby("CustomerID")["Revenue"]
+    .sum()
+    .sort_values(ascending=False)
+    .head(10)
+    .reset_index()
+)
+top_customers["CustomerID"] = top_customers["CustomerID"].astype(int).astype(str)
+
+hourly_qty = df.groupby("Hour")["Quantity"].sum().reset_index()
+
+prod_summary = (
+    df.groupby("Description")
+    .agg(Sztuki=("Quantity", "sum"), Przychod=("Revenue", "sum"))
+    .reset_index()
+)
+top_products = prod_summary.sort_values("Przychod", ascending=False).head(12).copy()
+top_products["Produkt"] = top_products["Description"].str.title().str[:35]
+customer_all_spending = df.groupby("CustomerID")["Revenue"].sum().reset_index()
+bins = [0, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, float("inf")]
+labels = [
+    "<100",
+    "100-250",
+    "250-500",
+    "500-1k",
+    "1-2.5k",
+    "2.5-5k",
+    "5-10k",
+    "10-25k",
+    "25k+",
+]
+customer_all_spending["Przedzial"] = pd.cut(
+    customer_all_spending["Revenue"], bins=bins, labels=labels, right=False
+)
+spending_intervals = (
+    customer_all_spending["Przedzial"].value_counts().reindex(labels).reset_index()
+)
+spending_intervals.columns = ["Przedzial", "Liczba_Klientow"]
+total_rev = df["Revenue"].sum()
+n_orders = df["InvoiceNo"].nunique()
+n_customers = int(df["CustomerID"].nunique())
+n_countries = df["Country"].nunique()
+prod_geo = df.groupby(["Description", "Is_UK"])["Quantity"].sum().unstack(fill_value=0)
+total_qty_uk = df[df["Is_UK"] == "United Kingdom"]["Quantity"].sum()
+total_qty_rest = df[df["Is_UK"] == "Reszta Świata"]["Quantity"].sum()
+prod_geo["UK_share"] = (prod_geo["United Kingdom"] / total_qty_uk) * 100
+prod_geo["Rest_share"] = (prod_geo["Reszta Świata"] / total_qty_rest) * 100
+prod_geo["Diff"] = prod_geo["UK_share"] - prod_geo["Rest_share"]
+prod_geo = prod_geo.reset_index()
+prod_geo["Produkt"] = prod_geo["Description"].str.title().str[:40]
+uk_leaning = prod_geo.sort_values("Diff", ascending=False).head(10)
+rest_leaning = prod_geo.sort_values("Diff", ascending=True).head(10)
+
+prod_diff_df = pd.concat([rest_leaning, uk_leaning]).sort_values("Diff")
+
+fp_pareto = go.Figure()
+fp_pareto.add_trace(
+    go.Scatter(
+        x=pareto_data["Cum_Prod_Pct"],
+        y=pareto_data["Cum_Rev_Pct"],
+        mode="lines",
+        line=dict(color="#d32f2f", width=3),
+        name="Skumulowany przychód",
+        hovertemplate="Top %{x:.1f}% produktów<br>Generuje: %{y:.1f}% przychodu<extra></extra>",
+    )
+)
+fp_pareto.add_vline(
+    x=20,
+    line_dash="dash",
+    line_color="#777777",
+    annotation_text="Progowe 20% produktów",
+    annotation_position="top left",
+)
+fp_pareto.add_hline(
+    y=80,
+    line_dash="dash",
+    line_color="#777777",
+    annotation_text="Progowe 80% przychodu",
+    annotation_position="bottom right",
+)
+fp_pareto.add_trace(
+    go.Scatter(
+        x=[20],
+        y=[80],
+        mode="markers",
+        marker=dict(color="black", size=10, symbol="x"),
+        name="Punkt idealnego Pareto (20/80)",
+        hovertemplate="Punkt odniesienia 20/80<extra></extra>",
+    )
+)
+fp_pareto.update_layout(
+    title="Weryfikacja zasady Pareto: Skumulowany udział produktów w całkowitym przychodzie",
+    xaxis_title="Skumulowany procent liczby produktów (od najważniejszego)",
+    yaxis_title="Skumulowany procent łącznego przychodu (%)",
+    template=TEMPLATE,
+    height=450,
+    showlegend=False,
+    xaxis=dict(ticksuffix="%", range=[0, 105]),
+    yaxis=dict(ticksuffix="%", range=[0, 105]),
+)
+
+uk_row = by_country[by_country["Kraj"] == "United Kingdom"].iloc[0]
+uk_revenue = uk_row["Przychod"]
+non_uk = by_country[by_country["Kraj"] != "United Kingdom"].reset_index(drop=True)
+others_revenue = non_uk["Przychod"].sum()
 TOP_N = 5
-top_others = non_uk.head(TOP_N)[['Kraj', 'Przychod']].copy()
+top_others = non_uk.head(TOP_N)[["Kraj", "Przychod"]].copy()
 rest = non_uk.iloc[TOP_N:]
 if len(rest) > 0:
-    pozostale = pd.DataFrame([{
-        'Kraj': f'Pozostałe ({len(rest)} krajów)',
-        'Przychod': rest['Przychod'].sum()
-    }])
+    pozostale = pd.DataFrame(
+        [
+            {
+                "Kraj": f"Pozostałe ({len(rest)} krajów)",
+                "Przychod": rest["Przychod"].sum(),
+            }
+        ]
+    )
     others_rows = pd.concat([top_others, pozostale], ignore_index=True)
 else:
     others_rows = top_others.reset_index(drop=True)
 
-# ── Stałe płótno + mapowanie 1 jednostka danych = 1 piksel ────────────────────
-# Rozmiar bąbli (marker) jest podawany w pikselach, więc aby pozycje i rozmiary
-# były spójne (brak nakładania się), ustawiamy stałą szerokość/wysokość oraz
-# zakresy osi równe wymiarom obszaru rysowania w px. Wtedy promień w px = promień
-# w jednostkach danych i pakowanie kół jest dokładne.
 FIG_W, FIG_H = 1100, 560
 MARGIN = dict(t=90, b=40, l=40, r=40)
-plot_w = FIG_W - MARGIN['l'] - MARGIN['r']
-plot_h = FIG_H - MARGIN['t'] - MARGIN['b']
+plot_w = FIG_W - MARGIN["l"] - MARGIN["r"]
+plot_h = FIG_H - MARGIN["t"] - MARGIN["b"]
 
-# Średnice w px: pole koła proporcjonalne do przychodu (UK = D_MAX)
 D_MAX = 250.0
-max_rev = uk_revenue  # UK jest największy, więc to globalne maksimum skali
+max_rev = uk_revenue
+
 def px_diam(v):
     return D_MAX * math.sqrt(v / max_rev)
 
-uk_d  = px_diam(uk_row['Przychod'])
-oth_d = [px_diam(v) for v in others_rows['Przychod']]
+uk_d = px_diam(uk_row["Przychod"])
+oth_d = [px_diam(v) for v in others_rows["Przychod"]]
 oth_r = [d / 2 for d in oth_d]
 
-# Krótkie nazwy (NAD kołem) i kwoty (w ŚRODKU koła). "Pozostałe (N krajów)" -> "Pozostałe".
-oth_disp   = ['Pozostałe' if str(k).startswith('Pozostałe') else str(k) for k in others_rows['Kraj']]
-oth_amount = [format_val(v) for v in others_rows['Przychod']]   # kwota trafia do środka koła
-# Kolory: zagregowane "Pozostałe" dostaje neutralny szary, reszta - morską zieleń
-oth_colors = ['#607d8b' if str(k).startswith('Pozostałe') else '#00897b' for k in others_rows['Kraj']]
+oth_disp = [
+    "Pozostałe" if str(k).startswith("Pozostałe") else str(k)
+    for k in others_rows["Kraj"]
+]
+oth_amount = [format_val(v) for v in others_rows["Przychod"]]
+oth_colors = [
+    "#607d8b" if str(k).startswith("Pozostałe") else "#00897b"
+    for k in others_rows["Kraj"]
+]
 
-# ── Okrąg ograniczający = KOŁO + JEDNOLINIOWA nazwa nad nim ────────────────────
-# Pakujemy te okręgi, więc ani koła, ani podpisy nie mają prawa się nakładać.
-CHAR_W  = 6.5    # przybliżona szerokość znaku nazwy (px)
-LABEL_H = 15.0   # wysokość jednej linii podpisu (px)
-LBL_GAP = 4.0    # odstęp podpisu od krawędzi koła
+CHAR_W = 6.5
+LABEL_H = 15.0
+LBL_GAP = 4.0
+
 def _name_halfwidth(name):
     return len(name) * CHAR_W / 2
 
 eff_r, voff = [], []
 for k in range(len(oth_r)):
-    r  = oth_r[k]
+    r = oth_r[k]
     hw = _name_halfwidth(oth_disp[k])
-    top = r + LBL_GAP + LABEL_H            # od środka koła w górę do szczytu nazwy
+    top = r + LBL_GAP + LABEL_H
     eff_r.append(max((top + r) / 2, r, hw))
-    voff.append((top - r) / 2)             # środek okręgu ograniczającego nad środkiem koła
+    voff.append((top - r) / 2)
 
-# UK: lewa strona, wyśrodkowane w pionie
 uk_cx = uk_d / 2 + 20
 uk_cy = plot_h / 2
 
-# ── Pakowanie: algorytm siłowy (rozpychanie okręgów ograniczających + przyciąganie) ──
 rng = random.Random(7)
 PAD = 6.0
 pts = [[rng.uniform(-1, 1), rng.uniform(-1, 1)] for _ in oth_r]
 n = len(pts)
 for _ in range(600):
-    # 1) Rozpychanie nakładających się par
     for i in range(n):
         for j in range(i + 1, n):
             dx = pts[j][0] - pts[i][0]
@@ -247,319 +269,473 @@ for _ in range(600):
             if dist < need:
                 push = (need - dist) / 2
                 ux, uy = dx / dist, dy / dist
-                pts[i][0] -= ux * push; pts[i][1] -= uy * push
-                pts[j][0] += ux * push; pts[j][1] += uy * push
-    # 2) Delikatne przyciąganie do środka (utrzymuje grupę zbitą)
-    for p in pts:
-        p[0] *= 0.985; p[1] *= 0.985
+                pts[i][0] -= ux * push
+                pts[i][1] -= uy * push
+                pts[j][0] += ux * push
+                pts[j][1] += uy * push
 
-# Środki KÓŁ = środki okręgów ograniczających przesunięte w dół o voff
+    for p in pts:
+        p[0] *= 0.985
+        p[1] *= 0.985
+
 mark_x = [p[0] for p in pts]
 mark_y = [p[1] - voff[k] for k, p in enumerate(pts)]
 
-# Przesuwamy grupę tuż obok UK (mały odstęp) i centrujemy w pionie względem koła UK
 group_left = min(mark_x[k] - oth_r[k] for k in range(n))
-group_cy   = sum(mark_y) / n
-GAP = 70  # odstęp między kołem UK a grupą
+group_cy = sum(mark_y) / n
+GAP = 70
 shift_x = (uk_cx + uk_d / 2 + GAP) - group_left
 shift_y = uk_cy - group_cy
 other_x = [mark_x[k] + shift_x for k in range(n)]
 other_y = [mark_y[k] + shift_y for k in range(n)]
 
-# Wyśrodkowanie całego układu w poziomie (z uwzględnieniem szerokości nazw)
 hw = [_name_halfwidth(oth_disp[k]) for k in range(n)]
-content_left  = uk_cx - uk_d / 2
+content_left = uk_cx - uk_d / 2
 content_right = max(other_x[k] + max(oth_r[k], hw[k]) for k in range(n))
-center_shift  = (plot_w - (content_right - content_left)) / 2 - content_left
-uk_cx  += center_shift
+center_shift = (plot_w - (content_right - content_left)) / 2 - content_left
+uk_cx += center_shift
 other_x = [x + center_shift for x in other_x]
-
 fp1_bubble = go.Figure()
-
-# Seria 1: UK – etykieta wewnątrz koła (białą czcionką)
-fp1_bubble.add_trace(go.Scatter(
-    x=[uk_cx], y=[uk_cy],
-    mode='markers+text',
-    text=[format_val(uk_row['Przychod'])],
-    textposition='middle center',
-    textfont=dict(color='white', size=14, family='Segoe UI', weight='bold'),
-    marker=dict(size=[uk_d], sizemode='diameter',
-                color='#1a237e', line=dict(color='white', width=1.5)),
-    customdata=[[uk_row['Kraj'], uk_row['Przychod']]],
-    hovertemplate='<b>Kraj: %{customdata[0]}</b><br>Pełny Przychód: £%{customdata[1]:,.2f}<extra></extra>',
-    showlegend=False
-))
-
-# Seria 2: pozostałe kraje – KWOTA w środku koła
-fp1_bubble.add_trace(go.Scatter(
-    x=other_x, y=other_y,
-    mode='markers+text',
-    text=oth_amount,
-    textposition='middle center',
-    textfont=dict(color='white', size=10, family='Segoe UI', weight='bold'),
-    marker=dict(size=oth_d, sizemode='diameter',
-                color=oth_colors, line=dict(color='white', width=1.5)),
-    customdata=list(zip(others_rows['Kraj'], others_rows['Przychod'])),
-    hovertemplate='<b>Kraj: %{customdata[0]}</b><br>Pełny Przychód: £%{customdata[1]:,.2f}<extra></extra>',
-    showlegend=False
-))
-
-# Nazwy krajów NAD kołami (kwoty są wewnątrz kół)
+fp1_bubble.add_trace(
+    go.Scatter(
+        x=[uk_cx],
+        y=[uk_cy],
+        mode="markers+text",
+        text=[format_val(uk_row["Przychod"])],
+        textposition="middle center",
+        textfont=dict(color="white", size=14, family="Segoe UI", weight="bold"),
+        marker=dict(
+            size=[uk_d],
+            sizemode="diameter",
+            color="#1a237e",
+            line=dict(color="white", width=1.5),
+        ),
+        customdata=[[uk_row["Kraj"], uk_row["Przychod"]]],
+        hovertemplate="<b>Kraj: %{customdata[0]}</b><br>Pełny Przychód: £%{customdata[1]:,.2f}<extra></extra>",
+        showlegend=False,
+    )
+)
+fp1_bubble.add_trace(
+    go.Scatter(
+        x=other_x,
+        y=other_y,
+        mode="markers+text",
+        text=oth_amount,
+        textposition="middle center",
+        textfont=dict(color="white", size=10, family="Segoe UI", weight="bold"),
+        marker=dict(
+            size=oth_d,
+            sizemode="diameter",
+            color=oth_colors,
+            line=dict(color="white", width=1.5),
+        ),
+        customdata=list(zip(others_rows["Kraj"], others_rows["Przychod"])),
+        hovertemplate="<b>Kraj: %{customdata[0]}</b><br>Pełny Przychód: £%{customdata[1]:,.2f}<extra></extra>",
+        showlegend=False,
+    )
+)
 fp1_bubble.add_annotation(
-    x=uk_cx, y=uk_cy + uk_d / 2,
+    x=uk_cx,
+    y=uk_cy + uk_d / 2,
     text=f"<b>{uk_row['Kraj']}</b>",
-    showarrow=False, yanchor='bottom', yshift=4,
-    font=dict(color='#1a237e', size=12, family='Segoe UI')
+    showarrow=False,
+    yanchor="bottom",
+    yshift=4,
+    font=dict(color="#1a237e", size=12, family="Segoe UI"),
 )
 for k in range(n):
-    # Podpis "Pozostałe" w kolorze swojego (szarego) bąbla; reszta w ciemnej zieleni
-    name_color = '#607d8b' if str(others_rows['Kraj'].iloc[k]).startswith('Pozostałe') else '#00695c'
-    fp1_bubble.add_annotation(
-        x=other_x[k], y=other_y[k] + oth_r[k],
-        text=f"<b>{oth_disp[k]}</b>",
-        showarrow=False, yanchor='bottom', yshift=3,
-        font=dict(color=name_color, size=11, family='Segoe UI')
+    name_color = (
+        "#607d8b"
+        if str(others_rows["Kraj"].iloc[k]).startswith("Pozostałe")
+        else "#00695c"
     )
-
+    fp1_bubble.add_annotation(
+        x=other_x[k],
+        y=other_y[k] + oth_r[k],
+        text=f"<b>{oth_disp[k]}</b>",
+        showarrow=False,
+        yanchor="bottom",
+        yshift=3,
+        font=dict(color=name_color, size=11, family="Segoe UI"),
+    )
 fp1_bubble.update_layout(
     title=f"Proporcja rynkowa: UK ({format_val(uk_revenue)}) vs Reszta Świata Łącznie ({format_val(others_revenue)})",
     xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, plot_w]),
     yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, plot_h]),
-    template=TEMPLATE, width=FIG_W, height=FIG_H, autosize=False,
-    margin=MARGIN
+    template=TEMPLATE,
+    width=FIG_W,
+    height=FIG_H,
+    autosize=False,
+    margin=MARGIN,
 )
+fp2_monthly = go.Figure(
+    go.Scatter(
+        x=monthly["YearMonth_str"].tolist(),
+        y=monthly["Przychod"].tolist(),
+        fill="tozeroy",
+        fillcolor="rgba(63,81,181,0.25)",
+        line=dict(color="#3f51b5", width=2),
+        mode="lines+markers",
+        marker=dict(size=6),
+        hovertemplate="%{x}<br>Przychód: £%{y:,.0f}<extra></extra>",
+    )
+)
+fp2_monthly.update_layout(
+    xaxis_title="Miesiąc",
+    yaxis_title="Przychód (GBP)",
+    template=TEMPLATE,
+    height=400,
+    xaxis=dict(type="category"),
+)
+fp2_monthly.update_yaxes(tickprefix="£", tickformat=",.0f", tick0=200000, dtick=200000)
 
-
-# Wykres 2 – Miesięczny przychód ze sprzedaży
-fp2_monthly = go.Figure(go.Scatter(
-    x=monthly['YearMonth_str'].tolist(), y=monthly['Przychod'].tolist(),
-    fill='tozeroy', fillcolor='rgba(63,81,181,0.25)',
-    line=dict(color='#3f51b5', width=2),
-    mode='lines+markers', marker=dict(size=6),
-    hovertemplate='%{x}<br>Przychód: £%{y:,.0f}<extra></extra>'
-))
-fp2_monthly.update_layout(xaxis_title='Miesiąc', yaxis_title='Przychód (GBP)', template=TEMPLATE, height=400,
-                          xaxis=dict(type='category'))
-# Podziałki od £200k (bez etykiety £0, która nachodziła na pierwszą datę w narożniku)
-fp2_monthly.update_yaxes(tickprefix='£', tickformat=',.0f', tick0=200000, dtick=200000)
-
-
-# Poprawka 6: Heatmapa ze skalą biało-niebieską
-DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-DAY_PL    = {'Monday': 'Poniedziałek', 'Tuesday': 'Wtorek', 'Wednesday': 'Środa', 'Thursday': 'Czwartek', 'Friday': 'Piątek', 'Saturday': 'Sobota', 'Sunday': 'Niedziela'}
-hmap = df.groupby(['DayOfWeek', 'Hour'])['Revenue'].sum().unstack(fill_value=0)
-# Pełna kolejność dni; sobota (brak danych) zostaje jako pusty wiersz wypełniony zerami
+DAY_ORDER = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
+DAY_PL = {
+    "Monday": "Poniedziałek",
+    "Tuesday": "Wtorek",
+    "Wednesday": "Środa",
+    "Thursday": "Czwartek",
+    "Friday": "Piątek",
+    "Saturday": "Sobota",
+    "Sunday": "Niedziela",
+}
+hmap = df.groupby(["DayOfWeek", "Hour"])["Revenue"].sum().unstack(fill_value=0)
 hmap = hmap.reindex(DAY_ORDER, fill_value=0)
 hmap.index = [DAY_PL.get(d, d) for d in hmap.index]
+fp3_heatmap = go.Figure(
+    data=go.Heatmap(
+        z=(hmap / 1_000).values,
+        x=[f"{h}:00" for h in hmap.columns],
+        y=hmap.index.tolist(),
+        colorscale=[[0, "#ffffff"], [1, "#0d47a1"]],
+        hovertemplate="Dzień: %{y}<br>Godzina: %{x}<br>Przychód: £%{z:.1f}k<extra></extra>",
+    )
+)
+fp3_heatmap.update_layout(
+    xaxis_title="Godzina dnia",
+    yaxis_title="Dzień tygodnia",
+    template=TEMPLATE,
+    height=450,
+)
+top6 = by_country.head(6)["Kraj"].tolist()
+order_vals = (
+    df[df["Country"].isin(top6)]
+    .groupby(["InvoiceNo", "Country"])["Revenue"]
+    .sum()
+    .reset_index()
+    .rename(columns={"Country": "Kraj", "Revenue": "Wartosc"})
+)
+box_order = (
+    order_vals.groupby("Kraj")["Wartosc"]
+    .median()
+    .sort_values(ascending=False)
+    .index.tolist()
+)
 
-fp3_heatmap = go.Figure(data=go.Heatmap(
-    z=(hmap / 1_000).values,
-    x=[f"{h}:00" for h in hmap.columns],
-    y=hmap.index.tolist(),
-    colorscale=[[0, '#ffffff'], [1, '#0d47a1']],  # Paleta od czystej bieli do ciemnego niebieskiego
-    hovertemplate='Dzień: %{y}<br>Godzina: %{x}<br>Przychód: £%{z:.1f}k<extra></extra>'
-))
-fp3_heatmap.update_layout(xaxis_title='Godzina dnia', yaxis_title='Dzień tygodnia', template=TEMPLATE, height=450)
-
-
-# Poprawka 7 (Rozwiązanie problemu plamy punktów UK): Zgrupowany czysty BOX PLOT bez surowych punktów
-top6 = by_country.head(6)['Kraj'].tolist()
-order_vals = df[df['Country'].isin(top6)].groupby(['InvoiceNo', 'Country'])['Revenue'].sum().reset_index().rename(columns={'Country': 'Kraj', 'Revenue': 'Wartosc'})
-box_order = order_vals.groupby('Kraj')['Wartosc'].median().sort_values(ascending=False).index.tolist()
-
-# Odcinamy ekstremalne anomalie dla zachowania przejrzystej skali osi Y
-q1 = order_vals['Wartosc'].quantile(0.25)
-q3 = order_vals['Wartosc'].quantile(0.75)
+q1 = order_vals["Wartosc"].quantile(0.25)
+q3 = order_vals["Wartosc"].quantile(0.75)
 iqr = q3 - q1
 limit_gorny = q3 + 1.5 * iqr
-order_vals_clean = order_vals[order_vals['Wartosc'] <= limit_gorny]
-
+order_vals_clean = order_vals[order_vals["Wartosc"] <= limit_gorny]
 fp4_box = go.Figure()
 for country in box_order:
-    country_vals = order_vals_clean[order_vals_clean['Kraj'] == country]['Wartosc']
-    fp4_box.add_trace(go.Box(
-        y=country_vals.tolist(),
-        name=country,
-        boxpoints=False,  # KLUCZOWA POPRAWKA: całkowicie ukrywa kropki, grupując dane w czytelne skrzynki
-        hovertemplate='<b>%{x}</b><br>Mediana zamówienia: £%{y:,.0f}<extra></extra>'
-    ))
-fp4_box.update_layout(xaxis_title='Kraj', yaxis_title='Wartość zamówienia (GBP)', template=TEMPLATE, height=450)
-fp4_box.update_yaxes(tickprefix='£', tickformat=',.0f')
-
-
-# Wykres 5: Top 5 rynków zagranicznych (zamiast Top 20)
-_df2 = top5_countries.sort_values('Przychod_k')
-fp_inter_countries5 = go.Figure(go.Bar(
-    x=_df2['Przychod_k'].tolist(), y=_df2['Kraj'].tolist(),
-    orientation='h', marker_color='#3f51b5',
-    hovertemplate='<b>%{y}</b><br>Przychód: £%{x:.1f}k<extra></extra>'
-))
-fp_inter_countries5.update_layout(xaxis_title='Przychód (tys. GBP)', template=TEMPLATE, height=400)
-fp_inter_countries5.update_xaxes(tickprefix='£', ticksuffix='k', tickformat='.0f')
-
-
-# Wykres 6: Nowy trend - Porównanie trendu: UK vs Świat
-fp_uk_vs_rest = go.Figure()
-fp_uk_vs_rest.add_trace(go.Bar(x=monthly_uk_rest['YearMonth_str'], y=monthly_uk_rest['United Kingdom'], name='United Kingdom', marker_color='#1a237e'))
-fp_uk_vs_rest.add_trace(go.Bar(x=monthly_uk_rest['YearMonth_str'], y=monthly_uk_rest['Reszta Świata'], name='Reszta Świata', marker_color='#00897b'))
-fp_uk_vs_rest.update_layout(barmode='group', xaxis_title='Miesiąc', yaxis_title='Przychód (GBP)', template=TEMPLATE, height=400,
-                            xaxis=dict(type='category'))
-fp_uk_vs_rest.update_yaxes(tickprefix='£', tickformat=',.0f')
-
-
-# Wykresy dodatkowe z punktu 8
-fp_top_customers = go.Figure(go.Bar(x=top_customers['CustomerID'], y=top_customers['Revenue'], marker_color='#8e24aa', hovertemplate='ID Klienta: %{x}<br>Wartość: £%{y:,.2f}<extra></extra>'))
-fp_top_customers.update_layout(xaxis_title='ID Klienta', yaxis_title='Suma zakupów (GBP)', template=TEMPLATE, height=400, xaxis=dict(type='category'))
-fp_top_customers.update_yaxes(tickprefix='£', tickformat=',.0f')
-
-fp_hourly_qty = go.Figure(go.Scatter(x=hourly_qty['Hour'], y=hourly_qty['Quantity'], mode='lines+markers', line=dict(color='#e65100', width=3), hovertemplate='Godzina: %{x}:00<br>Ilość sztuk: %{y:,}<extra></extra>'))
-fp_hourly_qty.update_layout(xaxis_title='Godzina transakcji', yaxis_title='Liczba sprzedanych sztuk', template=TEMPLATE, height=400, xaxis=dict(tickmode='linear'))
-
-# Nowy wykres: Liczba klientów w przedziałach wydatków
-fp_customer_segments = go.Figure(go.Bar(
-    x=spending_intervals['Przedzial'],
-    y=spending_intervals['Liczba_Klientow'],
-    marker_color='#0288d1',
-    textposition='auto',
-    hovertemplate='Przedział: %{x}<br>Liczba klientów: %{y:,}<extra></extra>'
-))
-fp_customer_segments.update_layout(
-    xaxis_title='Przedział całkowitych wydatków (GBP)',
-    yaxis_title='Liczba unikalnych klientów',
+    country_vals = order_vals_clean[order_vals_clean["Kraj"] == country]["Wartosc"]
+    fp4_box.add_trace(
+        go.Box(
+            y=country_vals.tolist(),
+            name=country,
+            boxpoints=False,
+            hovertemplate="<b>%{x}</b><br>Mediana zamówienia: £%{y:,.0f}<extra></extra>",
+        )
+    )
+fp4_box.update_layout(
+    xaxis_title="Kraj",
+    yaxis_title="Wartość zamówienia (GBP)",
     template=TEMPLATE,
-    height=400
+    height=450,
 )
-
-# Nowy wykres: Różnica popularności produktów (Skala względna UK vs Reszta Świata)
-fp_product_diff = go.Figure(go.Bar(
-    x=prod_diff_df['Diff'],
-    y=prod_diff_df['Produkt'],
-    orientation='h',
-    # Kolorowanie warunkowe: Morska zieleń dla Reszty Świata, Ciemny niebieski dla UK
-    marker_color=['#00897b' if d < 0 else '#1a237e' for d in prod_diff_df['Diff']],
-    hovertemplate='<b>%{y}</b><br>Różnica udziału: %{x:.3f} p.p.<extra></extra>'
-))
-
+fp4_box.update_yaxes(tickprefix="£", tickformat=",.0f")
+_df2 = top5_countries.sort_values("Przychod_k")
+fp_inter_countries5 = go.Figure(
+    go.Bar(
+        x=_df2["Przychod_k"].tolist(),
+        y=_df2["Kraj"].tolist(),
+        orientation="h",
+        marker_color="#3f51b5",
+        hovertemplate="<b>%{y}</b><br>Przychód: £%{x:.1f}k<extra></extra>",
+    )
+)
+fp_inter_countries5.update_layout(
+    xaxis_title="Przychód (tys. GBP)", template=TEMPLATE, height=400
+)
+fp_inter_countries5.update_xaxes(tickprefix="£", ticksuffix="k", tickformat=".0f")
+fp_uk_vs_rest = go.Figure()
+fp_uk_vs_rest.add_trace(
+    go.Bar(
+        x=monthly_uk_rest["YearMonth_str"],
+        y=monthly_uk_rest["United Kingdom"],
+        name="United Kingdom",
+        marker_color="#1a237e",
+    )
+)
+fp_uk_vs_rest.add_trace(
+    go.Bar(
+        x=monthly_uk_rest["YearMonth_str"],
+        y=monthly_uk_rest["Reszta Świata"],
+        name="Reszta Świata",
+        marker_color="#00897b",
+    )
+)
+fp_uk_vs_rest.update_layout(
+    barmode="group",
+    xaxis_title="Miesiąc",
+    yaxis_title="Przychód (GBP)",
+    template=TEMPLATE,
+    height=400,
+    xaxis=dict(type="category"),
+)
+fp_uk_vs_rest.update_yaxes(tickprefix="£", tickformat=",.0f")
+fp_top_customers = go.Figure(
+    go.Bar(
+        x=top_customers["CustomerID"],
+        y=top_customers["Revenue"],
+        marker_color="#8e24aa",
+        hovertemplate="ID Klienta: %{x}<br>Wartość: £%{y:,.2f}<extra></extra>",
+    )
+)
+fp_top_customers.update_layout(
+    xaxis_title="ID Klienta",
+    yaxis_title="Suma zakupów (GBP)",
+    template=TEMPLATE,
+    height=400,
+    xaxis=dict(type="category"),
+)
+fp_top_customers.update_yaxes(tickprefix="£", tickformat=",.0f")
+fp_hourly_qty = go.Figure(
+    go.Scatter(
+        x=hourly_qty["Hour"],
+        y=hourly_qty["Quantity"],
+        mode="lines+markers",
+        line=dict(color="#e65100", width=3),
+        hovertemplate="Godzina: %{x}:00<br>Ilość sztuk: %{y:,}<extra></extra>",
+    )
+)
+fp_hourly_qty.update_layout(
+    xaxis_title="Godzina transakcji",
+    yaxis_title="Liczba sprzedanych sztuk",
+    template=TEMPLATE,
+    height=400,
+    xaxis=dict(tickmode="linear"),
+)
+fp_customer_segments = go.Figure(
+    go.Bar(
+        x=spending_intervals["Przedzial"],
+        y=spending_intervals["Liczba_Klientow"],
+        marker_color="#0288d1",
+        textposition="auto",
+        hovertemplate="Przedział: %{x}<br>Liczba klientów: %{y:,}<extra></extra>",
+    )
+)
+fp_customer_segments.update_layout(
+    xaxis_title="Przedział całkowitych wydatków (GBP)",
+    yaxis_title="Liczba unikalnych klientów",
+    template=TEMPLATE,
+    height=400,
+)
+fp_product_diff = go.Figure(
+    go.Bar(
+        x=prod_diff_df["Diff"],
+        y=prod_diff_df["Produkt"],
+        orientation="h",
+        marker_color=["#00897b" if d < 0 else "#1a237e" for d in prod_diff_df["Diff"]],
+        hovertemplate="<b>%{y}</b><br>Różnica udziału: %{x:.3f} p.p.<extra></extra>",
+    )
+)
 fp_product_diff.update_layout(
     title="Profilowanie asortymentu: Produkty specyficzne dla rynków zagranicznych. (<span style='color:#00897b'>Reszta Świata</span>) vs <span style='color:#1a237e'>Wielka Brytania</span>",
-    xaxis_title='Różnica udziału w wolumenie rynku (Różnica w Punktach Procentowych)',
-    yaxis_title='Produkt',
+    xaxis_title="Różnica udziału w wolumenie rynku (Różnica w Punktach Procentowych)",
+    yaxis_title="Produkt",
     template=TEMPLATE,
-    height=600
+    height=600,
 )
 
-
-# Nowy wykres: Top produkty – liczba sprzedanych sztuk (słupki) vs przychód (linia, druga oś X)
-# Orientacja pozioma, bo nazwy produktów są długie. Odwracamy kolejność, by lider był na górze.
 prod_plot = top_products.iloc[::-1]
 fp_top_products = go.Figure()
-fp_top_products.add_trace(go.Bar(
-    y=prod_plot['Produkt'], x=prod_plot['Sztuki'],
-    name='Liczba sztuk', orientation='h', marker_color='#26a69a',
-    hovertemplate='<b>%{y}</b><br>Sprzedane sztuki: %{x:,}<extra></extra>'
-))
-fp_top_products.add_trace(go.Scatter(
-    y=prod_plot['Produkt'], x=prod_plot['Przychod'],
-    name='Przychód', xaxis='x2', mode='markers+lines',
-    line=dict(color='#1a237e', width=2), marker=dict(size=9),
-    hovertemplate='<b>%{y}</b><br>Przychód: £%{x:,.0f}<extra></extra>'
-))
-# Górna granica osi przychodu zaokrąglona w górę do pełnych 20k (oś startuje od 0)
-rev_upper = math.ceil(top_products['Przychod'].max() / 20000) * 20000
+fp_top_products.add_trace(
+    go.Bar(
+        y=prod_plot["Produkt"],
+        x=prod_plot["Sztuki"],
+        name="Liczba sztuk",
+        orientation="h",
+        marker_color="#26a69a",
+        hovertemplate="<b>%{y}</b><br>Sprzedane sztuki: %{x:,}<extra></extra>",
+    )
+)
+fp_top_products.add_trace(
+    go.Scatter(
+        y=prod_plot["Produkt"],
+        x=prod_plot["Przychod"],
+        name="Przychód",
+        xaxis="x2",
+        mode="markers+lines",
+        line=dict(color="#1a237e", width=2),
+        marker=dict(size=9),
+        hovertemplate="<b>%{y}</b><br>Przychód: £%{x:,.0f}<extra></extra>",
+    )
+)
+rev_upper = math.ceil(top_products["Przychod"].max() / 20000) * 20000
 fp_top_products.update_layout(
-    title=dict(text='Top 12 produktów: wolumen sprzedaży vs generowany przychód',
-               y=0.97, yanchor='top'),
-    xaxis=dict(title=dict(text='Liczba sprzedanych sztuk', font=dict(color='#26a69a')),
-               tickfont=dict(color='#26a69a')),
-    xaxis2=dict(title=dict(text='Przychód (GBP)', font=dict(color='#1a237e')),
-                tickfont=dict(color='#1a237e'),
-                tickprefix='£', tickformat=',.0f',
-                overlaying='x', side='top', showgrid=False,
-                range=[0, rev_upper], tick0=0, dtick=20000),
-    yaxis=dict(title='Produkt'),
-    legend=dict(orientation='h', yanchor='bottom', y=1.18, xanchor='right', x=1),
-    template=TEMPLATE, height=560,
-    margin=dict(t=150)  # górny odstęp na tytuł + górną oś (Przychód) + legendę
+    title=dict(
+        text="Top 12 produktów: wolumen sprzedaży vs generowany przychód",
+        y=0.97,
+        yanchor="top",
+    ),
+    xaxis=dict(
+        title=dict(text="Liczba sprzedanych sztuk", font=dict(color="#26a69a")),
+        tickfont=dict(color="#26a69a"),
+    ),
+    xaxis2=dict(
+        title=dict(text="Przychód (GBP)", font=dict(color="#1a237e")),
+        tickfont=dict(color="#1a237e"),
+        tickprefix="£",
+        tickformat=",.0f",
+        overlaying="x",
+        side="top",
+        showgrid=False,
+        range=[0, rev_upper],
+        tick0=0,
+        dtick=20000,
+    ),
+    yaxis=dict(title="Produkt"),
+    legend=dict(orientation="h", yanchor="bottom", y=1.18, xanchor="right", x=1),
+    template=TEMPLATE,
+    height=560,
+    margin=dict(t=150),
 )
 
-
-# ── POPRAWKA DLA WSZYSTKICH WYKRESÓW: BEZWZGLĘDNA ORIENTACJA POZIOMA ETYKIET ──
-# Do tej listy dopisujemy obiekt fp_pareto na sam koniec
-all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty, fp_customer_segments, fp_product_diff, fp_top_products, fp_pareto]
+all_charts = [
+    fp1_bubble,
+    fp2_monthly,
+    fp3_heatmap,
+    fp4_box,
+    fp_inter_countries5,
+    fp_uk_vs_rest,
+    fp_top_customers,
+    fp_hourly_qty,
+    fp_customer_segments,
+    fp_product_diff,
+    fp_top_products,
+    fp_pareto,
+]
 for chart in all_charts:
-    # Wymuszamy kąt 0 stopni (idealnie poziomo) oraz włączamy autodobieranie marginesów
     chart.update_xaxes(tickangle=0, automargin=True, overwrite=True)
     chart.update_yaxes(tickangle=0, automargin=True, overwrite=True)
 
-
-# ── 4. BUDOWANIE INTERAKTYWNEGO RAPORTU (report-creator API) ──────────────────
-print('Kompilacja raportu HTML...')
-
-
+print("Kompilacja raportu HTML...")
 with rc.ReportCreator(
     title="Analiza sprzedaży e-commerce",
     description=f"Źródło danych: UCI Machine Learning Repository  ·  Rynek UK, 2010-2011  ·  {n_orders:,} zamówień  ·  {n_customers:,} klientów",
-    footer="Skrypt wygenerowany automatycznie za pomocą pakietu report-creator  ·  Autorzy: K. Kot, W. Górecki"
+    footer="Skrypt wygenerowany automatycznie za pomocą pakietu report-creator  ·  Autorzy: K. Kot, W. Górecki",
 ) as report:
-
     view = rc.Block(
-        
         rc.Group(
-            rc.Metric(heading="Łączny przychód", value=f"£{total_rev/1_000_000:.2f}M"),
+            rc.Metric(
+                heading="Łączny przychód", value=f"£{total_rev / 1_000_000:.2f}M"
+            ),
             rc.Metric(heading="Liczba zamówień", value=f"{n_orders:,}"),
             rc.Metric(heading="Unikalni klienci", value=f"{n_customers:,}"),
             rc.Metric(heading="Obsługiwane kraje", value=str(n_countries)),
-            label="Kluczowe wskaźniki efektywności (KPI)"
+            label="Kluczowe wskaźniki efektywności (KPI)",
         ),
-        
         rc.Separator(),
-        
         rc.Heading("Cel i zakres analizy", level=2),
-        rc.Markdown(f"Zbiór danych **Online Retail** (UCI ML Repository) zawiera transakcje brytyjskiego sklepu e-commerce z lat 2010–2011. Analiza obejmuje {n_orders:,} zamówień od {n_customers:,} klientów z {n_countries} krajów. Celem jest identyfikacja wzorców sprzedaży, sezonowości oraz kluczowych rynków zbytu."),
-        
+        rc.Markdown(
+            f"Zbiór danych **Online Retail** (UCI ML Repository) zawiera transakcje brytyjskiego sklepu e-commerce z lat 2010–2011. Analiza obejmuje {n_orders:,} zamówień od {n_customers:,} klientów z {n_countries} krajów. Celem jest identyfikacja wzorców sprzedaży, sezonowości oraz kluczowych rynków zbytu."
+        ),
         rc.Heading("Struktura geograficzna sprzedaży", level=2),
-        rc.Markdown("Wizualizacja proporcji sprzedaży rodzimej (UK) na tle rynków międzynarodowych."),
-        
-        rc.Widget(StaticPlotlyWidget(fp1_bubble), label="Globalna struktura przychodów (UK vs Pozostałe Kraje)"),
-        rc.Widget(StaticPlotlyWidget(fp_inter_countries5), label="Top 5 rynków zagranicznych wg generowanego przychodu"),
-        rc.Widget(StaticPlotlyWidget(fp_product_diff), label="Analiza preferencji produktowych: Produkty charakterystyczne rynkowo (Różnica w p.p. udziału wolumenu)"),
-
+        rc.Markdown(
+            "Wizualizacja proporcji sprzedaży rodzimej (UK) na tle rynków międzynarodowych."
+        ),
+        rc.Widget(
+            StaticPlotlyWidget(fp1_bubble),
+            label="Globalna struktura przychodów (UK vs Pozostałe Kraje)",
+        ),
+        rc.Widget(
+            StaticPlotlyWidget(fp_inter_countries5),
+            label="Top 5 rynków zagranicznych wg generowanego przychodu",
+        ),
+        rc.Widget(
+            StaticPlotlyWidget(fp_product_diff),
+            label="Analiza preferencji produktowych: Produkty charakterystyczne rynkowo (Różnica w p.p. udziału wolumenu)",
+        ),
         rc.Separator(),
-
         rc.Heading("Analiza asortymentu (bestsellery)", level=2),
-        rc.Markdown("Zestawienie najlepiej sprzedających się produktów: liczba sprzedanych sztuk w porównaniu z generowanym przychodem."),
-        rc.Widget(StaticPlotlyWidget(fp_top_products), label="Top 12 produktów: wolumen sprzedaży (sztuki) vs generowany przychód"),
-
-        # ── NOWOŚĆ: Dedykowana sekcja raportu dla zasady Pareto ────────────────
+        rc.Markdown(
+            "Zestawienie najlepiej sprzedających się produktów: liczba sprzedanych sztuk w porównaniu z generowanym przychodem."
+        ),
+        rc.Widget(
+            StaticPlotlyWidget(fp_top_products),
+            label="Top 12 produktów: wolumen sprzedaży (sztuki) vs generowany przychód",
+        ),
         rc.Separator(),
         rc.Heading("Weryfikacja hipotezy biznesowej: Zasada Pareto (80/20)", level=2),
-        rc.Markdown(f"Analiza koncentracji struktury asortymentowej pozwala ocenić stopień dywersyfikacji przychodów. W badanym portfolio produktowym e-sklepu **top 20% asortymentu odpowiada za {rev_at_20_pct_prod:.1f}% łącznego przychodu**. Wynik ten potwierdza silną obecność rynkowej reguły Pareto – relatywnie wąski trzon oferty generuje lwią część całości obrotu przedsiębiorstwa."),
-        rc.Widget(StaticPlotlyWidget(fp_pareto), label="Krzywa Lorenza / Wykres koncentracji przychodu Pareto"),
-
+        rc.Markdown(
+            f"Analiza koncentracji struktury asortymentowej pozwala ocenić stopień dywersyfikacji przychodów. W badanym portfolio produktowym e-sklepu **top 20% asortymentu odpowiada za {rev_at_20_pct_prod:.1f}% łącznego przychodu**. Wynik ten potwierdza silną obecność rynkowej reguły Pareto – relatywnie wąski trzon oferty generuje lwią część całości obrotu przedsiębiorstwa."
+        ),
+        rc.Widget(
+            StaticPlotlyWidget(fp_pareto),
+            label="Krzywa Lorenza / Wykres koncentracji przychodu Pareto",
+        ),
         rc.Separator(),
-
         rc.Heading("Sezonowość i dynamika przychodów", level=2),
-        rc.Markdown("Porównanie ogólnego trendu czasowego z uwzględnieniem podziału na rynki krajowe i zagraniczne."),
-        rc.Widget(StaticPlotlyWidget(fp2_monthly), label="Miesięczny przychód całkowity sklepu"),
-        rc.Widget(StaticPlotlyWidget(fp_uk_vs_rest), label="Miesięczny przychód: Wielka Brytania w zestawieniu z resztą świata"),
-        
+        rc.Markdown(
+            "Porównanie ogólnego trendu czasowego z uwzględnieniem podziału na rynki krajowe i zagraniczne."
+        ),
+        rc.Widget(
+            StaticPlotlyWidget(fp2_monthly),
+            label="Miesięczny przychód całkowity sklepu",
+        ),
+        rc.Widget(
+            StaticPlotlyWidget(fp_uk_vs_rest),
+            label="Miesięczny przychód: Wielka Brytania w zestawieniu z resztą świata",
+        ),
         rc.Separator(),
-
-        # Sekcja 4
         rc.Heading("Wzorce behawioralne klientów oraz analizy dedykowane", level=2),
-        rc.Markdown("Identyfikacja szczytów aktywności, rozkładów wartości koszyków zakupowych oraz kluczowych dla biznesu odbiorców."),
-        rc.Widget(StaticPlotlyWidget(fp3_heatmap), label="Rozkład wartości sprzedaży według dnia tygodnia i godziny (Skala niebieska)"),
-        rc.Widget(StaticPlotlyWidget(fp4_box), label="Rozkład wartości pojedynczych zamówień dla top krajów"),
-        
-        # Zaktualizowana grupa zawierająca 3 wykresy analiz strukturalnych
+        rc.Markdown(
+            "Identyfikacja szczytów aktywności, rozkładów wartości koszyków zakupowych oraz kluczowych dla biznesu odbiorców."
+        ),
+        rc.Widget(
+            StaticPlotlyWidget(fp3_heatmap),
+            label="Rozkład wartości sprzedaży według dnia tygodnia i godziny (Skala niebieska)",
+        ),
+        rc.Widget(
+            StaticPlotlyWidget(fp4_box),
+            label="Rozkład wartości pojedynczych zamówień dla top krajów",
+        ),
         rc.Group(
-            rc.Widget(StaticPlotlyWidget(fp_top_customers), label="Top 10 Klientów sklepu według łącznej sumy zakupów (Analiza Lojalności)"),
-            rc.Widget(StaticPlotlyWidget(fp_customer_segments), label="Segmentacja bazy odbiorców: Liczba klientów w przedziałach wartości zakupów"),
-            rc.Widget(StaticPlotlyWidget(fp_hourly_qty), label="Całkowity wolumen sprzedanych produktów według godzin transakcji")
-        )
+            rc.Widget(
+                StaticPlotlyWidget(fp_top_customers),
+                label="Top 10 Klientów sklepu według łącznej sumy zakupów (Analiza Lojalności)",
+            ),
+            rc.Widget(
+                StaticPlotlyWidget(fp_customer_segments),
+                label="Segmentacja bazy odbiorców: Liczba klientów w przedziałach wartości zakupów",
+            ),
+            rc.Widget(
+                StaticPlotlyWidget(fp_hourly_qty),
+                label="Całkowity wolumen sprzedanych produktów według godzin transakcji",
+            ),
+        ),
     )
-    
-    out_filename = 'P_02_Kot_Gorecki.html'
+    out_filename = "P_02_Kot_Gorecki.html"
     report.save(view, out_filename)
-
-print(f'Raport został pomyślnie zapisany w pliku: {out_filename}')
+    
+print(f"Raport został pomyślnie zapisany w pliku: {out_filename}")
