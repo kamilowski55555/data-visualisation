@@ -57,12 +57,12 @@ top5_countries['Przychod_k'] = top5_countries['Przychod'] / 1_000
 monthly = (df.groupby('YearMonth')['Revenue']
            .sum().reset_index()
            .rename(columns={'Revenue': 'Przychod'}))
-monthly['YearMonth_str'] = monthly['YearMonth'].astype(str)
+monthly['YearMonth_str'] = monthly['YearMonth'].dt.strftime('%m.%Y')
 
 # Dane do wykresu UK vs Reszta Świata
 df['Is_UK'] = df['Country'].apply(lambda x: 'United Kingdom' if x == 'United Kingdom' else 'Reszta Świata')
 monthly_uk_rest = df.groupby(['YearMonth', 'Is_UK'])['Revenue'].sum().unstack(fill_value=0).reset_index()
-monthly_uk_rest['YearMonth_str'] = monthly_uk_rest['YearMonth'].astype(str)
+monthly_uk_rest['YearMonth_str'] = monthly_uk_rest['YearMonth'].dt.strftime('%m.%Y')
 
 # Top 10 Klientów (Lojalność)
 top_customers = df.groupby('CustomerID')['Revenue'].sum().sort_values(ascending=False).head(10).reset_index()
@@ -296,8 +296,10 @@ fp2_monthly = go.Figure(go.Scatter(
     mode='lines+markers', marker=dict(size=6),
     hovertemplate='%{x}<br>Przychód: £%{y:,.0f}<extra></extra>'
 ))
-fp2_monthly.update_layout(xaxis_title='Miesiąc', yaxis_title='Przychód (GBP)', template=TEMPLATE, height=400)
-fp2_monthly.update_yaxes(tickprefix='£', tickformat=',.0f')
+fp2_monthly.update_layout(xaxis_title='Miesiąc', yaxis_title='Przychód (GBP)', template=TEMPLATE, height=400,
+                          xaxis=dict(type='category'))
+# Podziałki od £200k (bez etykiety £0, która nachodziła na pierwszą datę w narożniku)
+fp2_monthly.update_yaxes(tickprefix='£', tickformat=',.0f', tick0=200000, dtick=200000)
 
 
 # Poprawka 6: Heatmapa ze skalą biało-niebieską
@@ -357,7 +359,8 @@ fp_inter_countries5.update_xaxes(tickprefix='£', ticksuffix='k', tickformat='.0
 fp_uk_vs_rest = go.Figure()
 fp_uk_vs_rest.add_trace(go.Bar(x=monthly_uk_rest['YearMonth_str'], y=monthly_uk_rest['United Kingdom'], name='United Kingdom', marker_color='#1a237e'))
 fp_uk_vs_rest.add_trace(go.Bar(x=monthly_uk_rest['YearMonth_str'], y=monthly_uk_rest['Reszta Świata'], name='Reszta Świata', marker_color='#00897b'))
-fp_uk_vs_rest.update_layout(barmode='group', xaxis_title='Miesiąc', yaxis_title='Przychód (GBP)', template=TEMPLATE, height=400)
+fp_uk_vs_rest.update_layout(barmode='group', xaxis_title='Miesiąc', yaxis_title='Przychód (GBP)', template=TEMPLATE, height=400,
+                            xaxis=dict(type='category'))
 fp_uk_vs_rest.update_yaxes(tickprefix='£', tickformat=',.0f')
 
 
@@ -419,12 +422,18 @@ fp_top_products.add_trace(go.Scatter(
     line=dict(color='#1a237e', width=2), marker=dict(size=9),
     hovertemplate='<b>%{y}</b><br>Przychód: £%{x:,.0f}<extra></extra>'
 ))
+# Górna granica osi przychodu zaokrąglona w górę do pełnych 20k (oś startuje od 0)
+rev_upper = math.ceil(top_products['Przychod'].max() / 20000) * 20000
 fp_top_products.update_layout(
-    title=dict(text='Top 12 produktów: wolumen sprzedaży (słupki) vs generowany przychód (linia)',
+    title=dict(text='Top 12 produktów: wolumen sprzedaży vs generowany przychód',
                y=0.97, yanchor='top'),
-    xaxis=dict(title='Liczba sprzedanych sztuk'),
-    xaxis2=dict(title='Przychód (GBP)', tickprefix='£', tickformat=',.0f',
-                overlaying='x', side='top', showgrid=False),
+    xaxis=dict(title=dict(text='Liczba sprzedanych sztuk', font=dict(color='#26a69a')),
+               tickfont=dict(color='#26a69a')),
+    xaxis2=dict(title=dict(text='Przychód (GBP)', font=dict(color='#1a237e')),
+                tickfont=dict(color='#1a237e'),
+                tickprefix='£', tickformat=',.0f',
+                overlaying='x', side='top', showgrid=False,
+                range=[0, rev_upper], tick0=0, dtick=20000),
     yaxis=dict(title='Produkt'),
     legend=dict(orientation='h', yanchor='bottom', y=1.18, xanchor='right', x=1),
     template=TEMPLATE, height=560,
@@ -468,8 +477,8 @@ with rc.ReportCreator(
         rc.Heading("Struktura geograficzna sprzedaży", level=2),
         rc.Markdown("Wizualizacja proporcji sprzedaży rodzimej (UK) na tle rynków międzynarodowych."),
         
-        rc.Widget(StaticPlotlyWidget(fp1_bubble), label="Globalna struktura przychodów: Zgrupowany wykres bąbelkowy (UK vs Pozostałe Kraje)"),
-        rc.Widget(StaticPlotlyWidget(fp_inter_countries5), label="Top 5 rynków zagranicznych według generowanego przychodu"),
+        rc.Widget(StaticPlotlyWidget(fp1_bubble), label="Globalna struktura przychodów (UK vs Pozostałe Kraje)"),
+        rc.Widget(StaticPlotlyWidget(fp_inter_countries5), label="Top 5 rynków wg generowanego przychodu"),
         rc.Widget(StaticPlotlyWidget(fp_product_diff), label="Analiza preferencji produktowych: Produkty charakterystyczne rynkowo (Różnica w p.p. udziału wolumenu)"),
 
         rc.Separator(),
@@ -482,7 +491,7 @@ with rc.ReportCreator(
 
         rc.Heading("Sezonowość i dynamika przychodów", level=2),
         rc.Markdown("Porównanie ogólnego trendu czasowego z uwzględnieniem podziału na rynki krajowe i zagraniczne."),
-        rc.Widget(StaticPlotlyWidget(fp2_monthly), label="Miesięczny przychód całkowity sklepu (Wykres liniowy)"),
+        rc.Widget(StaticPlotlyWidget(fp2_monthly), label="Miesięczny przychód całkowity sklepu"),
         rc.Widget(StaticPlotlyWidget(fp_uk_vs_rest), label="Miesięczny przychód: Wielka Brytania w zestawieniu z resztą świata"),
         
         rc.Separator(),
@@ -491,7 +500,7 @@ with rc.ReportCreator(
         rc.Heading("Wzorce behawioralne klientów oraz analizy dedykowane", level=2),
         rc.Markdown("Identyfikacja szczytów aktywności, rozkładów wartości koszyków zakupowych oraz kluczowych dla biznesu odbiorców."),
         rc.Widget(StaticPlotlyWidget(fp3_heatmap), label="Rozkład wartości sprzedaży według dnia tygodnia i godziny (Skala niebieska)"),
-        rc.Widget(StaticPlotlyWidget(fp4_box), label="Rozkład wartości pojedynczych zamówień dla top krajów (Wykres pudełkowy - wartości pogrupowane)"),
+        rc.Widget(StaticPlotlyWidget(fp4_box), label="Rozkład wartości pojedynczych zamówień dla top krajów"),
         
         # Zaktualizowana grupa zawierająca 3 wykresy analiz strukturalnych
         rc.Group(
