@@ -49,8 +49,8 @@ by_country = (df.groupby('Country')['Revenue']
               .reset_index()
               .rename(columns={'Country': 'Kraj', 'Revenue': 'Przychod'}))
 
-# Poprawka 3: Ścisłe Top 5 krajów
-top5_countries = by_country.head(5).copy()
+# Top 5 rynków ZAGRANICZNYCH (bez UK) -> wskakuje m.in. Australia
+top5_countries = by_country[by_country['Kraj'] != 'United Kingdom'].head(5).copy()
 top5_countries['Przychod_k'] = top5_countries['Przychod'] / 1_000
 
 # Dane miesięczne ogółem
@@ -480,7 +480,7 @@ with rc.ReportCreator(
         rc.Markdown("Wizualizacja proporcji sprzedaży rodzimej (UK) na tle rynków międzynarodowych."),
         
         rc.Widget(StaticPlotlyWidget(fp1_bubble), label="Globalna struktura przychodów (UK vs Pozostałe Kraje)"),
-        rc.Widget(StaticPlotlyWidget(fp_inter_countries5), label="Top 5 rynków wg generowanego przychodu"),
+        rc.Widget(StaticPlotlyWidget(fp_inter_countries5), label="Top 5 rynków zagranicznych wg generowanego przychodu"),
         rc.Widget(StaticPlotlyWidget(fp_product_diff), label="Analiza preferencji produktowych: Produkty charakterystyczne rynkowo (Różnica w p.p. udziału wolumenu)"),
 
         rc.Separator(),
