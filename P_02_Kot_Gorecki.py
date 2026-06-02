@@ -71,6 +71,18 @@ top_customers['CustomerID'] = top_customers['CustomerID'].astype(int).astype(str
 # Wolumen sprzedanych sztuk wg godzin
 hourly_qty = df.groupby('Hour')['Quantity'].sum().reset_index()
 
+# Nowa agregacja: Podział klientów na przedziały wydatków
+customer_all_spending = df.groupby('CustomerID')['Revenue'].sum().reset_index()
+
+# Definiujemy granice przedziałów oraz ich czytelne etykiety
+bins = [0, 1000, 5000, 10000, 25000, 50000, 100000, float('inf')]
+labels = ['<1k', '1-5k', '5-10k', '10-25k', '25-50k', '50-100k', '100k+']
+
+# Dyskretyzacja danych (przypisanie do kubłów) i zliczenie klientów
+customer_all_spending['Przedzial'] = pd.cut(customer_all_spending['Revenue'], bins=bins, labels=labels, right=False)
+spending_intervals = customer_all_spending['Przedzial'].value_counts().reindex(labels).reset_index()
+spending_intervals.columns = ['Przedzial', 'Liczba_Klientow']
+
 # Statystyki ogólne do KPI
 total_rev   = df['Revenue'].sum()
 n_orders    = df['InvoiceNo'].nunique()
@@ -272,9 +284,25 @@ fp_top_customers.update_yaxes(tickprefix='£', tickformat=',.0f')
 fp_hourly_qty = go.Figure(go.Scatter(x=hourly_qty['Hour'], y=hourly_qty['Quantity'], mode='lines+markers', line=dict(color='#e65100', width=3), hovertemplate='Godzina: %{x}:00<br>Ilość sztuk: %{y:,}<extra></extra>'))
 fp_hourly_qty.update_layout(xaxis_title='Godzina transakcji', yaxis_title='Liczba sprzedanych sztuk', template=TEMPLATE, height=400, xaxis=dict(tickmode='linear'))
 
+# Nowy wykres: Liczba klientów w przedziałach wydatków
+fp_customer_segments = go.Figure(go.Bar(
+    x=spending_intervals['Przedzial'],
+    y=spending_intervals['Liczba_Klientow'],
+    marker_color='#0288d1',
+    text=spending_intervals['Liczba_Klientow'],
+    textposition='auto',
+    hovertemplate='Przedział: %{x}<br>Liczba klientów: %{y:,}<extra></extra>'
+))
+fp_customer_segments.update_layout(
+    xaxis_title='Przedział całkowitych wydatków (GBP)',
+    yaxis_title='Liczba unikalnych klientów',
+    template=TEMPLATE,
+    height=400
+)
+
 
 # ── POPRAWKA DLA WSZYSTKICH WYKRESÓW: BEZWZGLĘDNA ORIENTACJA POZIOMA ETYKIET ──
-all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty]
+all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty, fp_customer_segments]
 for chart in all_charts:
     # Wymuszamy kąt 0 stopni (idealnie poziomo) oraz włączamy autodobieranie marginesów
     chart.update_xaxes(tickangle=0, automargin=True, overwrite=True)
@@ -327,8 +355,10 @@ with rc.ReportCreator(
         rc.Widget(StaticPlotlyWidget(fp3_heatmap), label="Rozkład wartości sprzedaży według dnia tygodnia i godziny (Skala niebieska)"),
         rc.Widget(StaticPlotlyWidget(fp4_box), label="Rozkład wartości pojedynczych zamówień dla top krajów (Wykres pudełkowy - wartości pogrupowane)"),
         
+        # Zaktualizowana grupa zawierająca 3 wykresy analiz strukturalnych
         rc.Group(
             rc.Widget(StaticPlotlyWidget(fp_top_customers), label="Top 10 Klientów sklepu według łącznej sumy zakupów (Analiza Lojalności)"),
+            rc.Widget(StaticPlotlyWidget(fp_customer_segments), label="Segmentacja bazy odbiorców: Liczba klientów w przedziałach wartości zakupów"),
             rc.Widget(StaticPlotlyWidget(fp_hourly_qty), label="Całkowity wolumen sprzedanych produktów według godzin transakcji")
         )
     )
