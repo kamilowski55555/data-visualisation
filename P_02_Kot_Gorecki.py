@@ -272,11 +272,13 @@ fp1_bubble.add_annotation(
     font=dict(color='#1a237e', size=12, family='Segoe UI')
 )
 for k in range(n):
+    # Podpis "Pozostałe" w kolorze swojego (szarego) bąbla; reszta w ciemnej zieleni
+    name_color = '#607d8b' if str(others_rows['Kraj'].iloc[k]).startswith('Pozostałe') else '#00695c'
     fp1_bubble.add_annotation(
         x=other_x[k], y=other_y[k] + oth_r[k],
         text=f"<b>{oth_disp[k]}</b>",
         showarrow=False, yanchor='bottom', yshift=3,
-        font=dict(color='#00695c', size=11, family='Segoe UI')
+        font=dict(color=name_color, size=11, family='Segoe UI')
     )
 
 fp1_bubble.update_layout(
