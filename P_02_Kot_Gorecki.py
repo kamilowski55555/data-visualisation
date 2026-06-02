@@ -1,5 +1,6 @@
 import warnings
 import math
+import random
 import pandas as pd
 import plotly.graph_objects as go
 import report_creator as rc
@@ -84,47 +85,109 @@ df_bubble = by_country.head(10).copy()
 uk_revenue = df_bubble[df_bubble['Kraj'] == 'United Kingdom']['Przychod'].values[0]
 others_revenue = by_country[by_country['Kraj'] != 'United Kingdom']['Przychod'].sum()
 
-x_pos = []
-y_pos = []
-other_count = 0
+# Rozdzielamy dane: UK (jedno wielkie koło) oraz pozostałe kraje (ciasny cluster)
+uk_row      = df_bubble[df_bubble['Kraj'] == 'United Kingdom'].iloc[0]
+others_rows = df_bubble[df_bubble['Kraj'] != 'United Kingdom'].reset_index(drop=True)
 
-for i, row in df_bubble.iterrows():
-    if row['Kraj'] == 'United Kingdom':
-        x_pos.append(2.2)  # Pozycja wielkiego koła UK
-        y_pos.append(2.5)
-    else:
-        # Konstruujemy kołowy "cluster" dla pozostałych 9 krajów wokół punktu (5.5, 2.5)
-        angle = (other_count * 2 * math.pi) / 9
-        radius = 0.95  # Promień zbicia grupy ze sobą
-        x_pos.append(5.4 + radius * math.cos(angle))
-        y_pos.append(2.5 + radius * math.sin(angle))
-        other_count += 1
+# ── Stałe płótno + mapowanie 1 jednostka danych = 1 piksel ────────────────────
+# Rozmiar bąbli (marker) jest podawany w pikselach, więc aby pozycje i rozmiary
+# były spójne (brak nakładania się), ustawiamy stałą szerokość/wysokość oraz
+# zakresy osi równe wymiarom obszaru rysowania w px. Wtedy promień w px = promień
+# w jednostkach danych i pakowanie kół jest dokładne.
+FIG_W, FIG_H = 1100, 560
+MARGIN = dict(t=90, b=40, l=40, r=40)
+plot_w = FIG_W - MARGIN['l'] - MARGIN['r']
+plot_h = FIG_H - MARGIN['t'] - MARGIN['b']
 
-# Drastycznie zwiększamy maksymalny rozmiar bąbli, aby tekst mieścił się idealnie
-max_size = 240
-sizeref = max(df_bubble['Przychod']) / (max_size ** 2)
+# Średnice w px: pole koła proporcjonalne do przychodu (UK = D_MAX)
+D_MAX = 250.0
+max_rev = df_bubble['Przychod'].max()
+def px_diam(v):
+    return D_MAX * math.sqrt(v / max_rev)
 
-fp1_bubble = go.Figure(go.Scatter(
-    x=x_pos, y=y_pos,
+uk_d  = px_diam(uk_row['Przychod'])
+oth_d = [px_diam(v) for v in others_rows['Przychod']]
+oth_r = [d / 2 for d in oth_d]
+
+# UK: lewa strona, wyśrodkowane w pionie
+uk_cx = uk_d / 2 + 20
+uk_cy = plot_h / 2
+
+# ── Pakowanie pozostałych kół: algorytm siłowy (rozpychanie + przyciąganie) ────
+# PAD daje dodatkowy luz na etykiety umieszczane nad bąblami.
+rng = random.Random(7)
+PAD = 16.0
+pts = [[rng.uniform(-1, 1), rng.uniform(-1, 1)] for _ in oth_r]
+n = len(pts)
+for _ in range(600):
+    # 1) Rozpychanie nakładających się par
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx = pts[j][0] - pts[i][0]
+            dy = pts[j][1] - pts[i][1]
+            dist = math.hypot(dx, dy) or 1e-6
+            need = oth_r[i] + oth_r[j] + PAD
+            if dist < need:
+                push = (need - dist) / 2
+                ux, uy = dx / dist, dy / dist
+                pts[i][0] -= ux * push; pts[i][1] -= uy * push
+                pts[j][0] += ux * push; pts[j][1] += uy * push
+    # 2) Delikatne przyciąganie do środka (utrzymuje grupę zbitą)
+    for p in pts:
+        p[0] *= 0.985; p[1] *= 0.985
+
+# Przesuwamy upakowaną grupę tuż obok UK (mały odstęp) i centrujemy w pionie
+group_left = min(p[0] - oth_r[k] for k, p in enumerate(pts))
+group_cy   = sum(p[1] for p in pts) / n
+GAP = 70  # odstęp między kołem UK a grupą
+shift_x = (uk_cx + uk_d / 2 + GAP) - group_left
+shift_y = uk_cy - group_cy
+other_x = [p[0] + shift_x for p in pts]
+other_y = [p[1] + shift_y for p in pts]
+
+# Wyśrodkowanie całego układu (koło UK + grupa) w poziomie w obszarze rysowania
+content_left  = uk_cx - uk_d / 2
+content_right = max(other_x[k] + oth_r[k] for k in range(n))
+center_shift  = (plot_w - (content_right - content_left)) / 2 - content_left
+uk_cx  += center_shift
+other_x = [x + center_shift for x in other_x]
+
+fp1_bubble = go.Figure()
+
+# Seria 1: UK – etykieta wewnątrz koła (białą czcionką)
+fp1_bubble.add_trace(go.Scatter(
+    x=[uk_cx], y=[uk_cy],
     mode='markers+text',
-    text=[format_val(r) for r in df_bubble['Przychod']],
+    text=[format_val(uk_row['Przychod'])],
     textposition='middle center',
-    textfont=dict(color='white', size=11, family='Segoe UI', weight='bold'),
-    marker=dict(
-        size=df_bubble['Przychod'],
-        sizemode='area',
-        sizeref=sizeref,
-        color=['#1a237e'] + ['#00897b'] * 9,
-        line=dict(color='white', width=1.5)
-    ),
-    customdata=list(zip(df_bubble['Kraj'], df_bubble['Przychod'])),
-    hovertemplate='<b>Kraj: %{customdata[0]}</b><br>Pełny Przychód: £%{customdata[1]:,.2f}<extra></extra>'
+    textfont=dict(color='white', size=14, family='Segoe UI', weight='bold'),
+    marker=dict(size=[uk_d], sizemode='diameter',
+                color='#1a237e', line=dict(color='white', width=1.5)),
+    customdata=[[uk_row['Kraj'], uk_row['Przychod']]],
+    hovertemplate='<b>Kraj: %{customdata[0]}</b><br>Pełny Przychód: £%{customdata[1]:,.2f}<extra></extra>',
+    showlegend=False
 ))
+
+# Seria 2: pozostałe kraje – etykiety NAD bąblami (małe koła nie mieszczą tekstu)
+fp1_bubble.add_trace(go.Scatter(
+    x=other_x, y=other_y,
+    mode='markers+text',
+    text=[format_val(r) for r in others_rows['Przychod']],
+    textposition='top center',
+    textfont=dict(color='#00695c', size=10, family='Segoe UI', weight='bold'),
+    marker=dict(size=oth_d, sizemode='diameter',
+                color='#00897b', line=dict(color='white', width=1.5)),
+    customdata=list(zip(others_rows['Kraj'], others_rows['Przychod'])),
+    hovertemplate='<b>Kraj: %{customdata[0]}</b><br>Pełny Przychód: £%{customdata[1]:,.2f}<extra></extra>',
+    showlegend=False
+))
+
 fp1_bubble.update_layout(
-    title=f" roporcja rynkowa: UK ({format_val(uk_revenue)}) vs Reszta Świata Łącznie ({format_val(others_revenue)})",
-    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, 7.5]),
-    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, 5]),
-    template=TEMPLATE, height=480
+    title=f"Proporcja rynkowa: UK ({format_val(uk_revenue)}) vs Reszta Świata Łącznie ({format_val(others_revenue)})",
+    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, plot_w]),
+    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, plot_h]),
+    template=TEMPLATE, width=FIG_W, height=FIG_H, autosize=False,
+    margin=MARGIN
 )
 
 
