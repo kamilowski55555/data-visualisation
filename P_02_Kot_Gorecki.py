@@ -419,13 +419,15 @@ fp_top_products.add_trace(go.Scatter(
     hovertemplate='<b>%{y}</b><br>Przychód: £%{x:,.0f}<extra></extra>'
 ))
 fp_top_products.update_layout(
-    title='Top 12 produktów: wolumen sprzedaży (słupki) vs generowany przychód (linia)',
+    title=dict(text='Top 12 produktów: wolumen sprzedaży (słupki) vs generowany przychód (linia)',
+               y=0.97, yanchor='top'),
     xaxis=dict(title='Liczba sprzedanych sztuk'),
     xaxis2=dict(title='Przychód (GBP)', tickprefix='£', tickformat=',.0f',
                 overlaying='x', side='top', showgrid=False),
     yaxis=dict(title='Produkt'),
-    legend=dict(orientation='h', yanchor='bottom', y=1.12, xanchor='right', x=1),
-    template=TEMPLATE, height=550
+    legend=dict(orientation='h', yanchor='bottom', y=1.18, xanchor='right', x=1),
+    template=TEMPLATE, height=560,
+    margin=dict(t=150)  # górny odstęp na tytuł + górną oś (Przychód) + legendę
 )
 
 
