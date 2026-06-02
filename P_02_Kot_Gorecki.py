@@ -118,13 +118,24 @@ prod_diff_df = pd.concat([rest_leaning, uk_leaning]).sort_values('Diff')
 # ── 3. GENEROWANIE INTERAKTYWNYCH WYKRESÓW PLOTLY ─────────────────────────────
 
 # Poprawka 1 & Poprawka 9: Wykres bąbelkowy z upakowanym kształtem (cluster) i dużymi kołami
-df_bubble = by_country.head(10).copy()
-uk_revenue = df_bubble[df_bubble['Kraj'] == 'United Kingdom']['Przychod'].values[0]
-others_revenue = by_country[by_country['Kraj'] != 'United Kingdom']['Przychod'].sum()
+# UK jako wielkie koło, a spośród rynków zagranicznych pokazujemy TOP 5 osobno;
+# wszystkie pozostałe kraje agregujemy w jeden bąbelek "Pozostałe (N krajów)".
+uk_row      = by_country[by_country['Kraj'] == 'United Kingdom'].iloc[0]
+uk_revenue  = uk_row['Przychod']
+non_uk      = by_country[by_country['Kraj'] != 'United Kingdom'].reset_index(drop=True)
+others_revenue = non_uk['Przychod'].sum()
 
-# Rozdzielamy dane: UK (jedno wielkie koło) oraz pozostałe kraje (ciasny cluster)
-uk_row      = df_bubble[df_bubble['Kraj'] == 'United Kingdom'].iloc[0]
-others_rows = df_bubble[df_bubble['Kraj'] != 'United Kingdom'].reset_index(drop=True)
+TOP_N = 5
+top_others = non_uk.head(TOP_N)[['Kraj', 'Przychod']].copy()
+rest = non_uk.iloc[TOP_N:]
+if len(rest) > 0:
+    pozostale = pd.DataFrame([{
+        'Kraj': f'Pozostałe ({len(rest)} krajów)',
+        'Przychod': rest['Przychod'].sum()
+    }])
+    others_rows = pd.concat([top_others, pozostale], ignore_index=True)
+else:
+    others_rows = top_others.reset_index(drop=True)
 
 # ── Stałe płótno + mapowanie 1 jednostka danych = 1 piksel ────────────────────
 # Rozmiar bąbli (marker) jest podawany w pikselach, więc aby pozycje i rozmiary
@@ -138,7 +149,7 @@ plot_h = FIG_H - MARGIN['t'] - MARGIN['b']
 
 # Średnice w px: pole koła proporcjonalne do przychodu (UK = D_MAX)
 D_MAX = 250.0
-max_rev = df_bubble['Przychod'].max()
+max_rev = uk_revenue  # UK jest największy, więc to globalne maksimum skali
 def px_diam(v):
     return D_MAX * math.sqrt(v / max_rev)
 
@@ -146,14 +157,35 @@ uk_d  = px_diam(uk_row['Przychod'])
 oth_d = [px_diam(v) for v in others_rows['Przychod']]
 oth_r = [d / 2 for d in oth_d]
 
+# Krótkie nazwy (NAD kołem) i kwoty (w ŚRODKU koła). "Pozostałe (N krajów)" -> "Pozostałe".
+oth_disp   = ['Pozostałe' if str(k).startswith('Pozostałe') else str(k) for k in others_rows['Kraj']]
+oth_amount = [format_val(v) for v in others_rows['Przychod']]   # kwota trafia do środka koła
+# Kolory: zagregowane "Pozostałe" dostaje neutralny szary, reszta - morską zieleń
+oth_colors = ['#607d8b' if str(k).startswith('Pozostałe') else '#00897b' for k in others_rows['Kraj']]
+
+# ── Okrąg ograniczający = KOŁO + JEDNOLINIOWA nazwa nad nim ────────────────────
+# Pakujemy te okręgi, więc ani koła, ani podpisy nie mają prawa się nakładać.
+CHAR_W  = 6.5    # przybliżona szerokość znaku nazwy (px)
+LABEL_H = 15.0   # wysokość jednej linii podpisu (px)
+LBL_GAP = 4.0    # odstęp podpisu od krawędzi koła
+def _name_halfwidth(name):
+    return len(name) * CHAR_W / 2
+
+eff_r, voff = [], []
+for k in range(len(oth_r)):
+    r  = oth_r[k]
+    hw = _name_halfwidth(oth_disp[k])
+    top = r + LBL_GAP + LABEL_H            # od środka koła w górę do szczytu nazwy
+    eff_r.append(max((top + r) / 2, r, hw))
+    voff.append((top - r) / 2)             # środek okręgu ograniczającego nad środkiem koła
+
 # UK: lewa strona, wyśrodkowane w pionie
 uk_cx = uk_d / 2 + 20
 uk_cy = plot_h / 2
 
-# ── Pakowanie pozostałych kół: algorytm siłowy (rozpychanie + przyciąganie) ────
-# PAD daje dodatkowy luz na etykiety umieszczane nad bąblami.
+# ── Pakowanie: algorytm siłowy (rozpychanie okręgów ograniczających + przyciąganie) ──
 rng = random.Random(7)
-PAD = 16.0
+PAD = 6.0
 pts = [[rng.uniform(-1, 1), rng.uniform(-1, 1)] for _ in oth_r]
 n = len(pts)
 for _ in range(600):
@@ -163,7 +195,7 @@ for _ in range(600):
             dx = pts[j][0] - pts[i][0]
             dy = pts[j][1] - pts[i][1]
             dist = math.hypot(dx, dy) or 1e-6
-            need = oth_r[i] + oth_r[j] + PAD
+            need = eff_r[i] + eff_r[j] + PAD
             if dist < need:
                 push = (need - dist) / 2
                 ux, uy = dx / dist, dy / dist
@@ -173,18 +205,23 @@ for _ in range(600):
     for p in pts:
         p[0] *= 0.985; p[1] *= 0.985
 
-# Przesuwamy upakowaną grupę tuż obok UK (mały odstęp) i centrujemy w pionie
-group_left = min(p[0] - oth_r[k] for k, p in enumerate(pts))
-group_cy   = sum(p[1] for p in pts) / n
+# Środki KÓŁ = środki okręgów ograniczających przesunięte w dół o voff
+mark_x = [p[0] for p in pts]
+mark_y = [p[1] - voff[k] for k, p in enumerate(pts)]
+
+# Przesuwamy grupę tuż obok UK (mały odstęp) i centrujemy w pionie względem koła UK
+group_left = min(mark_x[k] - oth_r[k] for k in range(n))
+group_cy   = sum(mark_y) / n
 GAP = 70  # odstęp między kołem UK a grupą
 shift_x = (uk_cx + uk_d / 2 + GAP) - group_left
 shift_y = uk_cy - group_cy
-other_x = [p[0] + shift_x for p in pts]
-other_y = [p[1] + shift_y for p in pts]
+other_x = [mark_x[k] + shift_x for k in range(n)]
+other_y = [mark_y[k] + shift_y for k in range(n)]
 
-# Wyśrodkowanie całego układu (koło UK + grupa) w poziomie w obszarze rysowania
+# Wyśrodkowanie całego układu w poziomie (z uwzględnieniem szerokości nazw)
+hw = [_name_halfwidth(oth_disp[k]) for k in range(n)]
 content_left  = uk_cx - uk_d / 2
-content_right = max(other_x[k] + oth_r[k] for k in range(n))
+content_right = max(other_x[k] + max(oth_r[k], hw[k]) for k in range(n))
 center_shift  = (plot_w - (content_right - content_left)) / 2 - content_left
 uk_cx  += center_shift
 other_x = [x + center_shift for x in other_x]
@@ -205,19 +242,34 @@ fp1_bubble.add_trace(go.Scatter(
     showlegend=False
 ))
 
-# Seria 2: pozostałe kraje – etykiety NAD bąblami (małe koła nie mieszczą tekstu)
+# Seria 2: pozostałe kraje – KWOTA w środku koła
 fp1_bubble.add_trace(go.Scatter(
     x=other_x, y=other_y,
     mode='markers+text',
-    text=[format_val(r) for r in others_rows['Przychod']],
-    textposition='top center',
-    textfont=dict(color='#00695c', size=10, family='Segoe UI', weight='bold'),
+    text=oth_amount,
+    textposition='middle center',
+    textfont=dict(color='white', size=10, family='Segoe UI', weight='bold'),
     marker=dict(size=oth_d, sizemode='diameter',
-                color='#00897b', line=dict(color='white', width=1.5)),
+                color=oth_colors, line=dict(color='white', width=1.5)),
     customdata=list(zip(others_rows['Kraj'], others_rows['Przychod'])),
     hovertemplate='<b>Kraj: %{customdata[0]}</b><br>Pełny Przychód: £%{customdata[1]:,.2f}<extra></extra>',
     showlegend=False
 ))
+
+# Nazwy krajów NAD kołami (kwoty są wewnątrz kół)
+fp1_bubble.add_annotation(
+    x=uk_cx, y=uk_cy + uk_d / 2,
+    text=f"<b>{uk_row['Kraj']}</b>",
+    showarrow=False, yanchor='bottom', yshift=4,
+    font=dict(color='#1a237e', size=12, family='Segoe UI')
+)
+for k in range(n):
+    fp1_bubble.add_annotation(
+        x=other_x[k], y=other_y[k] + oth_r[k],
+        text=f"<b>{oth_disp[k]}</b>",
+        showarrow=False, yanchor='bottom', yshift=3,
+        font=dict(color='#00695c', size=11, family='Segoe UI')
+    )
 
 fp1_bubble.update_layout(
     title=f"Proporcja rynkowa: UK ({format_val(uk_revenue)}) vs Reszta Świata Łącznie ({format_val(others_revenue)})",
