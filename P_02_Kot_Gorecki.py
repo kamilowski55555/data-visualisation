@@ -8,6 +8,19 @@ warnings.filterwarnings('ignore')
 
 TEMPLATE = 'plotly_white'
 
+class StaticPlotlyWidget:
+    def __init__(self, fig):
+        self.fig = fig
+        
+    def _repr_html_(self):
+        # Generujemy czysty HTML wykresu, wyłączając automatyczną 
+        # responsywność responsywność JS, która wymusza rotację etykiet
+        return self.fig.to_html(
+            full_html=True, 
+            include_plotlyjs=True, 
+            config={'responsive': False}
+        )
+
 # Helper do ładnego i krótkiego formatowania wartości wewnątrz kół
 def format_val(val):
     if val >= 1_000_000: return f"£{val/1_000_000:.1f}M"
@@ -201,9 +214,8 @@ fp_hourly_qty.update_layout(xaxis_title='Godzina transakcji', yaxis_title='Liczb
 all_charts = [fp1_bubble, fp2_monthly, fp3_heatmap, fp4_box, fp_inter_countries5, fp_uk_vs_rest, fp_top_customers, fp_hourly_qty]
 for chart in all_charts:
     # Wymuszamy kąt 0 stopni (idealnie poziomo) oraz włączamy autodobieranie marginesów
-    chart.update_xaxes(tickangle=0.01, automargin=True, overwrite=True)
+    chart.update_xaxes(tickangle=0, automargin=True, overwrite=True)
     chart.update_yaxes(tickangle=0, automargin=True, overwrite=True)
-    chart.show()
 
 
 # ── 4. BUDOWANIE INTERAKTYWNEGO RAPORTU (report-creator API) ──────────────────
@@ -234,27 +246,27 @@ with rc.ReportCreator(
         rc.Heading("Struktura geograficzna sprzedaży", level=2),
         rc.Markdown("Wizualizacja proporcji sprzedaży rodzimej (UK) na tle rynków międzynarodowych."),
         
-        rc.Widget(fp1_bubble, label="Globalna struktura przychodów: Zgrupowany wykres bąbelkowy (UK vs Pozostałe Kraje)"),
-        rc.Widget(fp_inter_countries5, label="Top 5 rynków zagranicznych według generowanego przychodu"),
+        rc.Widget(StaticPlotlyWidget(fp1_bubble), label="Globalna struktura przychodów: Zgrupowany wykres bąbelkowy (UK vs Pozostałe Kraje)"),
+        rc.Widget(StaticPlotlyWidget(fp_inter_countries5), label="Top 5 rynków zagranicznych według generowanego przychodu"),
         
         rc.Separator(),
 
         rc.Heading("Sezonowość i dynamika przychodów", level=2),
         rc.Markdown("Porównanie ogólnego trendu czasowego z uwzględnieniem podziału na rynki krajowe i zagraniczne."),
-        rc.Widget(fp2_monthly, label="Miesięczny przychód całkowity sklepu (Wykres liniowy)"),
-        rc.Widget(fp_uk_vs_rest, label="Miesięczny przychód: Wielka Brytania w zestawieniu z resztą świata"),
+        rc.Widget(StaticPlotlyWidget(fp2_monthly), label="Miesięczny przychód całkowity sklepu (Wykres liniowy)"),
+        rc.Widget(StaticPlotlyWidget(fp_uk_vs_rest), label="Miesięczny przychód: Wielka Brytania w zestawieniu z resztą świata"),
         
         rc.Separator(),
 
         # Sekcja 4
         rc.Heading("Wzorce behawioralne klientów oraz analizy dedykowane", level=2),
         rc.Markdown("Identyfikacja szczytów aktywności, rozkładów wartości koszyków zakupowych oraz kluczowych dla biznesu odbiorców."),
-        rc.Widget(fp3_heatmap, label="Rozkład wartości sprzedaży według dnia tygodnia i godziny (Skala niebieska)"),
-        rc.Widget(fp4_box, label="Rozkład wartości pojedynczych zamówień dla top krajów (Wykres pudełkowy - wartości pogrupowane)"),
+        rc.Widget(StaticPlotlyWidget(fp3_heatmap), label="Rozkład wartości sprzedaży według dnia tygodnia i godziny (Skala niebieska)"),
+        rc.Widget(StaticPlotlyWidget(fp4_box), label="Rozkład wartości pojedynczych zamówień dla top krajów (Wykres pudełkowy - wartości pogrupowane)"),
         
         rc.Group(
-            rc.Widget(fp_top_customers, label="Top 10 Klientów sklepu według łącznej sumy zakupów (Analiza Lojalności)"),
-            rc.Widget(fp_hourly_qty, label="Całkowity wolumen sprzedanych produktów według godzin transakcji")
+            rc.Widget(StaticPlotlyWidget(fp_top_customers), label="Top 10 Klientów sklepu według łącznej sumy zakupów (Analiza Lojalności)"),
+            rc.Widget(StaticPlotlyWidget(fp_hourly_qty), label="Całkowity wolumen sprzedanych produktów według godzin transakcji")
         )
     )
     
