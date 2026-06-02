@@ -346,9 +346,10 @@ fp2_monthly.update_yaxes(tickprefix='£', tickformat=',.0f', tick0=200000, dtick
 
 # Poprawka 6: Heatmapa ze skalą biało-niebieską
 DAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-DAY_PL    = {'Monday': 'Poniedziałek', 'Tuesday': 'Wtorek', 'Wednesday': 'Środa', 'Thursday': 'Czwartek', 'Friday': 'Piątek', 'Saturday' : 'Sobota', 'Sunday': 'Niedziela'}
+DAY_PL    = {'Monday': 'Poniedziałek', 'Tuesday': 'Wtorek', 'Wednesday': 'Środa', 'Thursday': 'Czwartek', 'Friday': 'Piątek', 'Saturday': 'Sobota', 'Sunday': 'Niedziela'}
 hmap = df.groupby(['DayOfWeek', 'Hour'])['Revenue'].sum().unstack(fill_value=0)
-hmap = hmap.reindex([d for d in DAY_ORDER if d in hmap.index])
+# Pełna kolejność dni; sobota (brak danych) zostaje jako pusty wiersz wypełniony zerami
+hmap = hmap.reindex(DAY_ORDER, fill_value=0)
 hmap.index = [DAY_PL.get(d, d) for d in hmap.index]
 
 fp3_heatmap = go.Figure(data=go.Heatmap(
@@ -419,7 +420,6 @@ fp_customer_segments = go.Figure(go.Bar(
     x=spending_intervals['Przedzial'],
     y=spending_intervals['Liczba_Klientow'],
     marker_color='#0288d1',
-    text=spending_intervals['Liczba_Klientow'],
     textposition='auto',
     hovertemplate='Przedział: %{x}<br>Liczba klientów: %{y:,}<extra></extra>'
 ))
@@ -441,8 +441,8 @@ fp_product_diff = go.Figure(go.Bar(
 ))
 
 fp_product_diff.update_layout(
-    title="Profilowanie asortymentu: Produkty specyficzne dla rynków zagranicznych (<span style='color:#00897b'>Reszta Świata</span>) vs <span style='color:#1a237e'>Wielka Brytania</span>",
-    xaxis_title='Różnica udziału w wolumenie rynku (Punkty Procentowe: Udział UK % - Udział Świata %)',
+    title="Profilowanie asortymentu: Produkty specyficzne dla rynków zagranicznych. (<span style='color:#00897b'>Reszta Świata</span>) vs <span style='color:#1a237e'>Wielka Brytania</span>",
+    xaxis_title='Różnica udziału w wolumenie rynku (Różnica w Punktach Procentowych)',
     yaxis_title='Produkt',
     template=TEMPLATE,
     height=600
